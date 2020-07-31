@@ -48,26 +48,26 @@
 
 (def char_prev_is_vowel #{\a \e \i \o \u \y})
 
-(defn collapse-repeating-chars1 [string]
+(defn collapse-repeating-chars [string]
   "saca las repetidas y todas las h salvo la del principio"
-  (loop [collapsed_string ""
-         char_prev nil
+  (loop [collapsed-string ""
+         char-prev nil
          [[i char] & cx] (map-indexed vector string)]
     (if char
-      (let [char_next (first cx)]
-        (println collapsed_string char_prev i char cx char_next)
-        (recur (if (not= char char_prev)
+      (let [char-next (first cx)]
+        (println collapsed-string char-prev i char cx char-next)
+        (recur (if (not= char char-prev)
                  (if (and (pos? i) (= \h char))
-                   (if (or (and (char-prev-is-vowel char_prev)
-                                (char-prev-is-vowel char_next))
-                           (= char_prev \ ))
-                     (str collapsed_string char)
-                     collapsed_string)
-                   (str collapsed_string char))
-                 collapsed_string)
+                   (if (or (and (char-prev-is-vowel char-prev)
+                                (char-prev-is-vowel char-next))
+                           (= char-prev \ ))
+                     (str collapsed-string char)
+                     collapsed-string)
+                   (str collapsed-string char))
+                 collapsed-string)
                char
                cx))
-      collapsed_string)))
+      collapsed-string)))
 
 (defn replace- [str regexp]
   (reduce (fn [str [regex rep]]
