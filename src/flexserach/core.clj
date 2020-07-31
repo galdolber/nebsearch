@@ -2,8 +2,7 @@
 
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
-
-(defn collapse-repeating-chars1 [string]
+(defn collapse-repeating-chars [string]
   (loop [collapsed_string ""
          char_prev nil
          [[i char] & cx] (map-indexed vector string)]
