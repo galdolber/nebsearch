@@ -1,4 +1,5 @@
-(ns flexserach.core)
+(ns flexserach.core
+  (:require [clojure.string :as string]))
 
 (def defaults
   {:encode "icase"
@@ -44,3 +45,77 @@
                char
                cx))
       collapsed-string)))
+
+
+(defn replace- [str regexp]
+  (reduce (fn [str [regex rep]] (string/replace str regex rep))
+          str
+          regexp))
+
+(def simple-regex
+  {#"\\s+" " "
+   #"[^a-z0-9 ]" ""
+   #"[-/]" " "
+   #"[àáâãäå]" "a"
+   #"[èéêë]" "e"
+   #"[ìíîï]" "i"
+   #"[òóôõöő]" "o"
+   #"[ùúûüű]" "u"
+   #"[ýŷÿ]" "y"
+   #"ñ" "n"
+   #"[çc]" "c"
+   #"ß" "s"
+   #" & " " and "})
+
+(def advanced-regex
+  {#"ae" "a"
+   #"ai" "ei"
+   #"ay" "ei"
+   #"ey" "ei"
+   #"oe" "o"
+   #"ue" "u"
+   #"ie" "i"
+   #"sz" "s"
+   #"zs" "s"
+   #"ck" "k"
+   #"cc" "k"
+   #"sh" "s"
+   #"th" "t"
+   #"dt" "t"
+   #"ph" "f"
+   #"pf" "f"
+   #"ou" "o"
+   #"uo" "u"})
+
+(def extra-regex
+  {#"p" "b"
+   #"z" "s"
+   #"[cgq]" "k"
+   #"n" "m"
+   #"d" "t"
+   #"[vw]" "f"
+   #"[aeiouy]" ""})
+
+
+(defn global-encoder-icase [value]
+  (string/lower-case value))
+
+(defn global-encoder-simple [value]
+  (when value
+    (let [s (replace- (string/lower-case value) simple-regex)]
+      (if (string/blank? s) "" s))))
+
+(defn global-encoder-advanced-raw [value]
+  (when value
+    (let [value (global-encoder-simple value)]
+      (if (> (count value) 2)
+        (let [s (replace- (string/lower-case value) advanced-regex)]
+          (if (string/blank? s) "" s))
+        value))))
+
+(defn global-encoder-advanced [value]
+  (when value
+    (let [value (global-encoder-advanced-raw value)]
+      (if (> (count value) 1)
+        (collapse-repeating-chars value)
+        value))))
