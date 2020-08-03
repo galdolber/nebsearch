@@ -3,16 +3,3 @@ target/classes/META-INF/maven/flexserach/flexserach/pom.properties
 target/stale/leiningen.core.classpath.extract-native-dependencies
 target/stale/leiningen.core.classpath.extract-native-dependencies
 target/repl-port
-target
-.calva/output-window/output.repl-file
-.calva
-.nrepl-port
-.calva/output-window/output.repl-file
-.nrepl-port
-.gitignore.txt
-mio.clj
-.gitignore.txt
-*.repl-file
-*.properties
-.calva/output-window/output.repl-file
-target/classes/META-INF/maven/flexserach/flexserach/pom.properties
