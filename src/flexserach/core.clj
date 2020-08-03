@@ -1,5 +1,5 @@
 (ns flexserach.core
-  (:require [clojure.string :as string]))
+  (:require [clojure.string :as str]))
 
 (def defaults
   {:encode "icase"
@@ -21,9 +21,11 @@
    :balance {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
    :fast {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
 
-(defn sort-by-length-down [a b]
-  (let [diff (- (count a) (count b))]
-    (if (< diff 0) 1 (if diff (- 1) 0))))
+
+(defn sort-by-length-down [a b] (cond
+                                  (> (count a) (count b)) -1
+                                  (< (count a) (count b)) 1
+                                  :else 0));;corregida, funcionaba mal
 
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
@@ -46,76 +48,74 @@
                cx))
       collapsed-string)))
 
+;;regexs pasadas de mapa a vector
+(def simple-regex
+  [[#"[àáâãäå]" "a"]
+   [#"[èéêë]" "e"]
+   [#"[ìíîï]" "i"]
+   [#"[òóôõöő]" "o"]
+   [#"[ùúûüű]" "u"]
+   [#"[ýŷÿ]" "y"]
+   [#"ñ" "n"]
+   [#"[çc]" "k"]
+   [#"ß" "s"]
+   [#" & " " and "]
+   [#"[-/]" " "]
+   [#"[^a-z0-9 ]" ""];;ojo con el espacio al final de [^a-z0-9 ]
+   [#"\s+" " "]])
 
-(defn replace- [str regexp]
-  (reduce (fn [str [regex rep]] (string/replace str regex rep))
+(def advanced-regex
+  [[#"ae" "a"]
+   [#"ai" "ei"]
+   [#"ay" "ei"]
+   [#"ey" "ei"]
+   [#"oe" "o"]
+   [#"ue" "u"]
+   [#"ie" "i"]
+   [#"sz" "s"]
+   [#"zs" "s"]
+   [#"sh" "s"]
+   [#"ck" "k"]
+   [#"cc" "k"]
+   [#"th" "t"]
+   [#"dt" "t"]
+   [#"ph" "f"]
+   [#"pf" "f"]
+   [#"ou" "o"]
+   [#"uo" "u"]])
+
+(def extra-regex
+  [[#"p" "b"]
+   [#"z" "s"]
+   [#"[cgq]" "k"]
+   [#"n" "m"]
+   [#"d" "t"]
+   [#"[vw]" "f"]
+   [#"[aeiouy]" ""]])
+
+(defn replace-regexes [str regexp]
+  (reduce (fn [str [regex rep]]
+            (str/replace str regex rep))
           str
           regexp))
 
-(def simple-regex
-  {#"\\s+" " "
-   #"[^a-z0-9 ]" ""
-   #"[-/]" " "
-   #"[àáâãäå]" "a"
-   #"[èéêë]" "e"
-   #"[ìíîï]" "i"
-   #"[òóôõöő]" "o"
-   #"[ùúûüű]" "u"
-   #"[ýŷÿ]" "y"
-   #"ñ" "n"
-   #"[çc]" "c"
-   #"ß" "s"
-   #" & " " and "})
-
-(def advanced-regex
-  {#"ae" "a"
-   #"ai" "ei"
-   #"ay" "ei"
-   #"ey" "ei"
-   #"oe" "o"
-   #"ue" "u"
-   #"ie" "i"
-   #"sz" "s"
-   #"zs" "s"
-   #"ck" "k"
-   #"cc" "k"
-   #"sh" "s"
-   #"th" "t"
-   #"dt" "t"
-   #"ph" "f"
-   #"pf" "f"
-   #"ou" "o"
-   #"uo" "u"})
-
-(def extra-regex
-  {#"p" "b"
-   #"z" "s"
-   #"[cgq]" "k"
-   #"n" "m"
-   #"d" "t"
-   #"[vw]" "f"
-   #"[aeiouy]" ""})
-
-
 (defn global-encoder-icase [value]
-  (string/lower-case value))
+  (str/lower-case value))
 
 (defn global-encoder-simple [value]
   (when value
-    (let [s (replace- (string/lower-case value) simple-regex)]
-      (if (string/blank? s) "" s))))
+    (let [s (replace-regexes (str/lower-case value) simple-regex)]
+      (if (str/blank? s) "" s))))
 
-(defn global-encoder-advanced-raw [value]
-  (when value
-    (let [value (global-encoder-simple value)]
-      (if (> (count value) 2)
-        (let [s (replace- (string/lower-case value) advanced-regex)]
-          (if (string/blank? s) "" s))
-        value))))
+(defn global-encoder-advanced [string skip]
+  (if-not string
+    string
+    (let [string (global-encoder-simple string)]
+      (cond (< 2 (count string)) (if (and (not skip) (< 1 (count string)))
+                                   (collapse-repeating-chars (replace-regexes string advanced-regex))
+                                   (replace-regexes string advanced-regex))
+            (not skip) (if (< 1 (count string))
+                         (collapse-repeating-chars string)
+                         string)
+            :else string))))
 
-(defn global-encoder-advanced [value]
-  (when value
-    (let [value (global-encoder-advanced-raw value)]
-      (if (> (count value) 1)
-        (collapse-repeating-chars value)
-        value))))
