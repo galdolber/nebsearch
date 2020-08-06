@@ -3,6 +3,23 @@
 
 ;;AGREGAR LOS WHEN CUANDO HAGAN FALTA Y SUS TESTS
 
+(def release "")
+(def debug true)
+(def profiler false)
+(def support-worker true)
+(def support-encoder true)
+(def support-cache true)
+(def support-async true)
+(def support-preset true)
+(def support-suggestion true)
+(def support-serialize true)
+(def support-info true)
+(def support-document true)
+(def support-where true)
+(def support-pagination true)
+(def support-operator true)
+(def support-callback true)
+
 (def defaults
   {:encode "icase"
    :tokenize "forward"
@@ -11,16 +28,17 @@
    :async false
    :worker false
    :rtl false
+   :doc false
    :resolution 9
    :threshold 0
    :depth 0})
 
 (def presets
-  {:memory {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
+  {:memory {:encode (if support-encoder "extra" "icase") :tokenize "strict" :threshold 0 :resolution 1}
    :speed {:encode "icase" :tokenize "strict" :threshold 1 :resolution 3 :depth 2}
-   :match  {:encode "extra" :tokenize "full" :threshold 1 :resolution 3}
-   :score {:encode "extra" :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
-   :balance {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
+   :match  {:encode (if support-encoder "extra" "icase") :tokenize "full" :threshold 1 :resolution 3}
+   :score {:encode (if support-encoder "extra" "icase") :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
+   :balance {:encode (if support-encoder "balance" "icase") :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
    :fast {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
 
 
@@ -167,19 +185,35 @@
     result))
 
 (defn add-index [map dupes value id partial-score context-score threshold resolution];;FALTAN LOS TESTS, NO SE LOS INPUTS
-  (when (aget dupes value) (aget dupes value))
+  (when (get dupes value)
+    (get dupes value))
   (let [score (if partial-score
-                (+
-                 (* (- resolution (or threshold (/ resolution 1.5))) context-score)
-                 (* (or threshold (/ resolution 1.5)) partial-score))
+                (+ (* (resolution (or threshold (/ resolution 1.5))) context-score)
+                   (* (or (threshold (/ resolution 1.5))) partial-score))
                 context-score)]
-    (aset dupes value score)
-    (when (>= score threshold)
-      ;; TODO?
-      (let [arr (aget map (- resolution (bit-shift-right #_>> (+ score 0.5) 0)))];;LE DEJAS EL SHIFT COMENTADO POR ALGO?
-        (set! arr (or (aget arr value) (aset arr value #js [])))
-        (aset arr (.-length arr) id)))
+    (assoc dupes value score)
+    (when (<= threshold score)
+      (let [arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)))
+            arr (or (get arr value) (assoc arr value []))]
+        (assoc arr (count arr) id)))
     score))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn encode [name value];;FALTAN LOS TESTS, NO SE LOS INPUTS
+  ((name global-encoder) value))
 
+;function is_function(val){return typeof val === "function";}
+
+(defn filter-words [words fn-or-map];;FALTAN LOS TESTS, NO SE LOS INPUTS
+  (let [lenght (count words)
+        has-function (is-funtion fn-or-map)]
+    (loop [word (get words 0)
+           filtered []
+           c 0]
+      (cond (= c lenght) filtered
+            :else (recur (get words (inc c))
+                         (if (or (and has-function (fn-or-map word))
+                                 (and (not has-function) (not (get fn-or-map word))))
+                           (conj filtered word)
+                           filtered)
+                         (inc c))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
