@@ -9,7 +9,15 @@
   (is (= (f/sort-by-length-down "aáG7/(..*)bc" "aahd66.- & -ººº") 1)))
 
 (deftest collapse-repeating-chars-test
-  (is (= (f/collapse-repeating-chars "hello") "helo"))
+  (is (= (f/collapse-repeating-chars "") ""))
+  (is (= (f/collapse-repeating-chars " ") " "))
+  (is (= (f/collapse-repeating-chars "ea") "ea"))
+  (is (= (f/collapse-repeating-chars "aa") "a"))
+  (is (= (f/collapse-repeating-chars "-") "-"))
+  (is (= (f/collapse-repeating-chars "-//") "-/"))
+  (is (= (f/collapse-repeating-chars "  ") " "))
+  (is (= (f/collapse-repeating-chars "eaaee") "eae"))
+  (is (= (f/collapse-repeating-chars "hello eeaaa") "helo ea"))
   (is (= (f/collapse-repeating-chars "ihello") "ielo"))
   (is (= (f/collapse-repeating-chars "Hhell99o") "Hel9o"))
   (is (= (f/collapse-repeating-chars "h4ell..o") "h4el.o"))
@@ -22,6 +30,9 @@
   (is (= (f/collapse-repeating-chars "ñcc-cççc99*/(()$%2@@)ñ") "ñc-cçc9*/()$%2@)ñ")))
 
 (deftest replace-regexes-test
+  ;;simple
+  (is (= (f/replace-regexes "  " f/simple-regex) " "))
+  (is (= (f/replace-regexes "--  " f/simple-regex) " "))
   (is (= (f/replace-regexes "abc & abc" f/simple-regex) "abk and abk"))
   (is (= (f/replace-regexes "asd dfd" f/simple-regex) "asd dfd"))
   (is (= (f/replace-regexes "asd.dfd." f/simple-regex) "asddfd"))
@@ -29,18 +40,27 @@
   (is (= (f/replace-regexes "asdlk-al" f/simple-regex) "asdlk al"))
   (is (= (f/replace-regexes "asdááóññsbplk-al" f/simple-regex) "asdaaonnsbplk al"))
   (is (= (f/replace-regexes "ahHh & h-/s/...d  lk-a 99*/´ñlLKJHGñççññl" f/simple-regex) "ahh and h s d lk a 99 nlnkknnl"))
-  ;
+  ;;advanced
   (is (= (f/replace-regexes "aesdlkael" f/advanced-regex) "asdlkal"))
   (is (= (f/replace-regexes "asauouaeioiuuioiauoaiaaieieyydadthtdhdlk-zs" f/advanced-regex) "asauioiuuioiauiaeiiiydattdhdlk-s"))
   (is (= (f/replace-regexes "aspszzshckkkcphhfpfptdttdf-dlkal" f/advanced-regex) "aspsskkkcfhffptttdf-dlkal"))
   (is (= (f/replace-regexes "ayasckkckkhscshhcskthdtpfdlk-al" f/advanced-regex) "eiaskkkkhscshcskttfdlk-al"))
-  ;
+  ;;extra
+  (is (= (f/replace-regexes "" f/extra-regex) ""))
+  (is (= (f/replace-regexes "H  -/h" f/extra-regex) "H  -/h"))
+  (is (= (f/replace-regexes "aççcçccbc & abc" f/extra-regex) "ççkçkkbk & bk"))
   (is (= (f/replace-regexes "n" f/extra-regex) "m"))
   (is (= (f/replace-regexes "vw" f/extra-regex) "ff"))
   (is (= (f/replace-regexes "aecqgpze-/35168askjhHGTFR" f/extra-regex) "kkkbs-/35168skjhHGTFR"))
   (is (= (f/replace-regexes "pdenwvvwwddj" f/extra-regex) "btmfffffttj"))
   (is (= (f/replace-regexes "anaaaáéìòò" f/extra-regex) "máéìòò"))
-  (is (= (f/replace-regexes "ddndzzdnt" f/extra-regex) "ttmtsstmt")))
+  (is (= (f/replace-regexes "ddndzzdnt" f/extra-regex) "ttmtsstmt"))
+  ;;balance
+  (is (= (f/replace-regexes "" f/balance-regex) ""))
+  (is (= (f/replace-regexes " " f/balance-regex) " "))
+  (is (= (f/replace-regexes "  " f/balance-regex) " "))
+  (is (= (f/replace-regexes " - /" f/balance-regex) " "))
+  (is (= (f/replace-regexes "abc & abc-7/aeeaqeeáèì.,88" f/balance-regex) "abc abc 7 aeeaqee88")))
 
 (deftest global-encoder-icase-test
   (is (= (f/global-encoder-icase "Hello") "hello"))
@@ -55,6 +75,7 @@
   (is (= (f/global-encoder-simple "Abc & á   /-ççSs83bc") "abk and a kkss83bk")))
 
 (deftest global-encoder-advanced-test
+  ;;true
   (is (= (f/global-encoder-advanced "áAc" true) "aak"))
   (is (= (f/global-encoder-advanced "-pA/9/& " true) " pa 9 "))
   (is (= (f/global-encoder-advanced "A." true) "a"))
@@ -63,9 +84,26 @@
   (is (= (f/global-encoder-advanced "kj34KJH/(..,7/´s`wçç``^^)" true) "kj34kjh 7 swkk"))
   (is (= (f/global-encoder-advanced "HhhHHkj34KJH/sh(.´F´RÉáászááhé.-.??uo.,7/´s`wçç``^^)" true) "hhhhhkj34kjh sfreaasaahe u7 swkk"))
   (is (= (f/global-encoder-advanced "ñññ" true) "nnn"))
-  ;
+  ;;false
   (is (= (f/global-encoder-advanced "" false) ""))
   (is (= (f/global-encoder-advanced "á" false) "a"))
   (is (= (f/global-encoder-advanced "Áe" false) "ae"))
   (is (= (f/global-encoder-advanced "kj34KJH/(..,7/´s`wçç``^^)" false) "kj34kj 7 swk"))
   (is (= (f/global-encoder-advanced "ññ" false) "n")))
+
+(deftest global-encoder-extra-test
+  (is (= (f/global-encoder-extra "lsdlkjn83298)(/KMHB.,.,KKnnnaññ") "lstlkjm83298 kmbkm"))
+  (is (= (f/global-encoder-extra "lsdlkznñd298)(ppB.,.,KKn and nnddaññ") "lstlksmt298bkm amt nmtm"))
+  (is (= (f/global-encoder-extra "lsdlkjn8vw3298)(/Kaei y MHB.,.ww,KKnnvnaññ") "lstlkjm8f3298 k y mbfkmfm"))
+  (is (= (f/global-encoder-extra "lsdlkjn8 cc329c8)(/KMHgB.,.qQ,KKnQnnaññ") "lstlkjm8 k329k8 kmkbkmkm"))
+  (is (= (f/global-encoder-extra "lsdlkszjn8cc3298)(/KççMHaeoeB.,.,KKnnnaññ") "lstlksjm8k3298 kmbkm")))
+
+(deftest global-encoder-balance-test
+  (is (= (f/global-encoder-balance "") ""))
+  (is (= (f/global-encoder-balance " ") " "))
+  (is (= (f/global-encoder-balance "cc") "c"))
+  (is (= (f/global-encoder-balance "ççpvwW") "pvw"))
+  (is (= (f/global-encoder-balance "-") " "))
+  (is (= (f/global-encoder-balance "-/") " "))
+  (is (= (f/global-encoder-balance "hhHçkjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "hkjas aslk28jsysd ae ou c k"))
+  (is (= (f/global-encoder-balance "kjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "kjas aslk28jsysd ae ou c k")))
