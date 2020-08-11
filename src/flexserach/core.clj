@@ -216,4 +216,164 @@
                            (conj filtered word)
                            filtered)
                          (inc c))))))
+
+(defn build-dupes [{:keys [resolution threshold]}]
+  (vec (repeat (- resolution (or threshold 0)) {})))
+
+(defn init [options]
+  (let [{:keys [threshold resolution] :as options}
+        (-> defaults (merge options) (merge (presets (:preset options))))
+        options (update options :resolution #(if (<= % threshold) (inc threshold) %))
+        {:keys [encoder resolution] :as options}
+        (update options :encoder #(or (global-encoder %) %))
+        options (update options :filterer #(when % (set (mapv encoder %))))]
+    (into
+     options
+     {:fmap (build-dupes options)
+      :ctx {}
+      :id {}
+      :timer 0})))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn remove-index [map id]
+  (loop [coll (vec map)
+         ret []
+         c 0]
+    (let [key (first (first coll))
+          value (second (first coll))]
+      (println coll ret id c)
+      (if (= c (count map)) (if (empty? ret) nil
+                                (apply assoc {} (apply concat ret)))
+          (recur
+           (vec (rest coll))
+           (if (and (= 1 (count value)) (= id (first value))) ret
+               (loop [vals value
+                      rett []
+                      cc 0]
+                 (if (= cc (count value)) (conj ret [key rett])
+                     (recur
+                      (rest vals)
+                      (cond (map? (first vals)) (conj rett (remove-index (first vals) id))
+                            (= id (first vals)) rett
+                            (not= id (first vals)) (conj rett (first vals)))
+                      (inc cc)))))
+           (inc c))))))
+
+;;ACA VIENEN:
+;;REMOVE-FLEX
+;;UPDATE-FELX
+;;FORWARD-TOKENIZER
+;;REVERSE-TOKENIZER
+;;FULL-TOKENIZER
+;;DEFAULT-TOKENIZER
+;;ADD-FLEX
+
+(defn flexsearch [options settings]
+  (let [id-counter 0
+        id (if settings (get settings "id")
+               (get options "id"))
+        id (if (or id (= id 0)) id
+               (inc id-counter))]
+    (init options)
+    (assoc settings
+           "index"
+           (fn []
+             (when (settings :doc)
+               (keys (get-in settings [:doc (first (get-in settings [:doc :keys])) :ids]))
+               (keys (get settings :ids)))))
+    (assoc settings
+           "length"
+           (fn []
+             (get-in settings [:index :length])))))
+
+
+;;ESTAS PERTENECEN A INTERSECT:
+
+(defn limit-true [result pointer limit cursor]
+  (let [length (count result)
+        start (or pointer 0)
+        page (+ start limit)]
+    (when (and pointer (< length pointer))
+      (let [pointer 0
+            start (or pointer 0)
+            page (+ start limit)]
+        (when (< page length)
+          (let [result (vec (drop (dec start) (take page result)))]
+            (create-page cursor page result))))
+      (when (< page length)
+        (let [start (or pointer 0)
+              page (+ start limit)
+              result (vec (drop start (take page result)))]
+          (create-page cursor page result))
+        (let [page 0]
+          (when start
+            (let [result (vec (drop (dec start)))]
+              (create-page cursor page result))))))))
+
+(defn length-z-true [bool arrays pointer limit cursor page]
+  (when (or (not bool) (not= (first bool) "not"))
+          (let [result (first arrays)]
+            (when pointer
+              (let [pointer (.parseInt (first pointer))]
+                (when limit
+                  (limit-true result pointer limit cursor)
+                  (create-page cursor page result)))))))
+
+(defn length-z>1 [];;SIN TERMINAR
+  (let [check {}
+        suggestions []
+        z 0
+        i 0
+        init true
+        count 0]
+    (when pointer
+      (when (= 2 (count pointer))
+        (let [pointer-suggest pointer
+              pointer false]
+          (when has-not
+            (let [check-not (loop [z z
+                                   ret {}]
+                              (when (= (get bool z) "not")
+                                (if (= z (count length-z)) ret
+                                    (recur (inc z)
+                                           (loop [i 0
+                                                  ret {}]
+                                             (if (= i (count (get arrays z))) ret
+                                                 (recur (inc i)
+                                                        (assoc ret (str "@" (get (get arrays z) i)) 1))))))
+                                nil))
+                  last-index (loop [z z
+                                    ret nil]
+                               (when (not (= (get bool z) "not"))
+                                 (if (= z (count length-z)) ret
+                                     (recur (inc z)
+                                            (inc z)))
+                                 nil))]
+              (when (= last-index nil)
+                (do (create-page cursor page result)
+                    (let [z 0]))))
+            (let [bool-main (and (string? bool) bool)]
+              ())))
+        (let [pointer (.parseInt (first pointer))
+              pointer-count pointer]
+          (when has-not
+            (let [check-not {}])
+            (let [bool-main (and (string? bool) bool)]
+              (when)))))
+      ())))
+
+
+(defn intersect [arrays limit cursor suggest bool has-and has-not];;SIN TERMINAR
+  (let [result []]
+    (when (= true cursor)
+      (let[cursor 0
+           pointer ""
+           length-z (count arrays)]
+       (when (< 1 length-z)
+          ()
+          ()))
+      (let [pointer (and cursor (str/split cursor #":"))
+            length-z (count arrays)]
+        (when (< 1 length-z)
+          ()
+          ())))))
