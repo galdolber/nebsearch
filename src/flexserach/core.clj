@@ -1,25 +1,6 @@
 (ns flexserach.core
   (:require [clojure.string :as str]))
 
-;;AGREGAR LOS WHEN CUANDO HAGAN FALTA Y SUS TESTS
-
-(def release "")
-(def debug true)
-(def profiler false)
-(def support-worker true)
-(def support-encoder true)
-(def support-cache true)
-(def support-async true)
-(def support-preset true)
-(def support-suggestion true)
-(def support-serialize true)
-(def support-info true)
-(def support-document true)
-(def support-where true)
-(def support-pagination true)
-(def support-operator true)
-(def support-callback true)
-
 (def defaults
   {:encode "icase"
    :tokenize "forward"
@@ -34,11 +15,11 @@
    :depth 0})
 
 (def presets
-  {:memory {:encode (if support-encoder "extra" "icase") :tokenize "strict" :threshold 0 :resolution 1}
+  {:memory {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
    :speed {:encode "icase" :tokenize "strict" :threshold 1 :resolution 3 :depth 2}
-   :match  {:encode (if support-encoder "extra" "icase") :tokenize "full" :threshold 1 :resolution 3}
-   :score {:encode (if support-encoder "extra" "icase") :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
-   :balance {:encode (if support-encoder "balance" "icase") :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
+   :match {:encode "extra" :tokenize "full" :threshold 1 :resolution 3}
+   :score {:encode "extra" :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
+   :balance {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
    :fast {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
 
 
@@ -148,24 +129,24 @@
   (if-not string
     string
     (let [string (global-encoder-advanced string true)]
-      (cond (< 1 (count string))
-            (collapse-repeating-chars
-             (str/join " "
-                       (loop [string (str/split string #" ")
-                              current (get string 0)
-                              c 0]
-                         (println string current c)
-                         (cond (= c (count string)) string
-                               :else (recur (if (< 1 (count current))
-                                              (assoc string c
-                                                     (str (first current)
-                                                          (replace-regexes
-                                                           (subs current 1)
-                                                           extra-regex)))
-                                              string)
-                                            (get string (inc c))
-                                            (inc c))))))
-            :else string))))
+      (if (< 1 (count string))
+        (collapse-repeating-chars
+         (str/join " "
+                   (loop [string (str/split string #" ")
+                          current (get string 0)
+                          c 0]
+                     (println string current c)
+                     (if (= c (count string)) string
+                         (recur (if (< 1 (count current))
+                                  (assoc string c
+                                         (str (first current)
+                                              (replace-regexes
+                                               (subs current 1)
+                                               extra-regex)))
+                                  string)
+                                (get string (inc c))
+                                (inc c))))))
+        string))))
 
 (defn global-encoder-balance [string]
   (when string
@@ -185,37 +166,34 @@
     result))
 
 (defn add-index [map dupes value id partial-score context-score threshold resolution];;FALTAN LOS TESTS, NO SE LOS INPUTS
-  (when (get dupes value)
-    (get dupes value))
-  (let [score (if partial-score
-                (+ (* (resolution (or threshold (/ resolution 1.5))) context-score)
-                   (* (or (threshold (/ resolution 1.5))) partial-score))
-                context-score)]
-    (assoc dupes value score)
-    (when (<= threshold score)
-      (let [arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)))
-            arr (or (get arr value) (assoc arr value []))]
-        (assoc arr (count arr) id)))
-    score))
+  (if (get dupes value)
+    (get dupes value)
+    (let [score (if partial-score
+                  (+ (* (resolution (or threshold (/ resolution 1.5))) context-score)
+                     (* (or (threshold (/ resolution 1.5))) partial-score))
+                  context-score)
+          dupes (assoc dupes value score)
+          arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)))
+          arr (or (get arr value) (assoc arr value []))
+          arr (assoc arr (count arr) id)]
+      {:score score :dupes dupes :arr arr})))
 
 (defn encode [name value];;FALTAN LOS TESTS, NO SE LOS INPUTS
   ((name global-encoder) value))
 
-;function is_function(val){return typeof val === "function";}
-
 (defn filter-words [words fn-or-map];;FALTAN LOS TESTS, NO SE LOS INPUTS
   (let [lenght (count words)
-        has-function (is-funtion fn-or-map)]
+        has-function (fn? fn-or-map)]
     (loop [word (get words 0)
            filtered []
            c 0]
-      (cond (= c lenght) filtered
-            :else (recur (get words (inc c))
-                         (if (or (and has-function (fn-or-map word))
-                                 (and (not has-function) (not (get fn-or-map word))))
-                           (conj filtered word)
-                           filtered)
-                         (inc c))))))
+      (if (= c lenght) filtered
+          (recur (get words (inc c))
+                 (if (or (and has-function (fn-or-map word))
+                         (and (not has-function) (not (get fn-or-map word))))
+                   (conj filtered word)
+                   filtered)
+                 (inc c))))))
 
 (defn build-dupes [{:keys [resolution threshold]}]
   (vec (repeat (- resolution (or threshold 0)) {})))
@@ -241,7 +219,6 @@
          c 0]
     (let [key (first (first coll))
           value (second (first coll))]
-      (println coll ret id c)
       (if (= c (count map)) (if (empty? ret) nil
                                 (apply assoc {} (apply concat ret)))
           (recur
@@ -268,56 +245,92 @@
 ;;DEFAULT-TOKENIZER
 ;;ADD-FLEX
 
-(defn flexsearch [options settings]
-  (let [id-counter 0
-        id (if settings (get settings "id")
-               (get options "id"))
-        id (if (or id (= id 0)) id
-               (inc id-counter))]
-    (init options)
-    (assoc settings
-           "index"
-           (fn []
-             (when (settings :doc)
-               (keys (get-in settings [:doc (first (get-in settings [:doc :keys])) :ids]))
-               (keys (get settings :ids)))))
-    (assoc settings
-           "length"
-           (fn []
-             (get-in settings [:index :length])))))
-
-
 ;;ESTAS PERTENECEN A INTERSECT:
 
 (defn limit-true [result pointer limit cursor]
-  (let [length (count result)
-        start (or pointer 0)
-        page (+ start limit)]
-    (when (and pointer (< length pointer))
+  (let [length (count result)]
+    (if (and pointer (< length pointer))
       (let [pointer 0
             start (or pointer 0)
             page (+ start limit)]
-        (when (< page length)
+        (if (< page length)
           (let [result (vec (drop (dec start) (take page result)))]
-            (create-page cursor page result))))
-      (when (< page length)
-        (let [start (or pointer 0)
-              page (+ start limit)
-              result (vec (drop start (take page result)))]
-          (create-page cursor page result))
-        (let [page 0]
-          (when start
-            (let [result (vec (drop (dec start)))]
-              (create-page cursor page result))))))))
+            (create-page cursor page result))
+          (create-page cursor page result)))
+      (let [start (or pointer 0)
+            page (+ start limit)]
+        (if (< page length)
+          (let [result (vec (drop (dec start) (take page result)))]
+            (create-page cursor page result))
+          (let [page 0]
+            (when start
+              (let [result (vec (drop (dec start) result))]
+                (create-page cursor page result)))))))))
 
 (defn length-z-true [bool arrays pointer limit cursor page]
-  (when (or (not bool) (not= (first bool) "not"))
-          (let [result (first arrays)]
-            (when pointer
-              (let [pointer (.parseInt (first pointer))]
-                (when limit
-                  (limit-true result pointer limit cursor)
-                  (create-page cursor page result)))))))
+  (when (not bool)
+    (let [result (first arrays)]
+      (when pointer
+        (let [pointer (.parseInt (first pointer))]
+          (if limit
+            (limit-true result pointer limit cursor)
+            (create-page cursor page result)))))))
+
+(defn for-init-true [result-length first-result has-not check-not check has-and result count]
+  (loop [i 0
+         id (get first-result i)
+         index (str "@" id)
+         check check
+         result result
+         count count]
+    (if (= i result-length) {:check check
+                             :result result
+                             :count count}
+        (recur (inc i) ;;i
+               (get first-result (inc i)) ;;id
+               (str "@" (get first-result (inc i))) ;;index
+               (if (or (not has-not) (not (get check-not index))) ;;check
+                 (assoc check index 1)
+                 check)
+               (if (and (or (not has-not) (not (get check-not index))) ;;result
+                        (not has-and))
+                 (assoc result count id)
+                 result)
+               (if (and (or (not has-not) (not (get check-not index))) ;;count
+                        (not has-and))
+                 (inc count)
+                 count)))))
+
+(defn init-true [first-result has-not check-not check has-and result arr count]
+  (if first-result
+    (let [result-length (count first-result)]
+      (merge {:first-result nil :init false}
+             (for-init-true result-length first-result has-not check-not check has-and result count)))
+    arr))
+
+(defn for-first-result-true [i first-result result-length result check-not count]
+  (loop [i i
+         id (get first-result i)
+         count count
+         result result]
+    (if (= i result-length) {:count count
+                             :result result}
+        (recur (inc i)
+               (get first-result (inc i))
+               (if (not (get check-not (str "@" id)))
+                 (inc count)
+                 count)
+               (if (not (get check-not (str "@" id)))
+                 (assoc result count id)
+                 result)))))
+
+(defn first-result-true [first-result has-not pointer result check-not] 
+  (let [result-length (count first-result)]
+    (if has-not
+      (if pointer
+        (for-first-result-true (.parseInt pointer) first-result result-length result check-not pointer)
+        (for-first-result-true 0 first-result result-length result check-not pointer))
+      first-result)))
 
 (defn length-z>1 [];;SIN TERMINAR
   (let [check {}
@@ -330,10 +343,10 @@
       (when (= 2 (count pointer))
         (let [pointer-suggest pointer
               pointer false]
-          (when has-not
+          (if has-not
             (let [check-not (loop [z z
                                    ret {}]
-                              (when (= (get bool z) "not")
+                              (if (= (get bool z) "not")
                                 (if (= z (count length-z)) ret
                                     (recur (inc z)
                                            (loop [i 0
@@ -344,7 +357,7 @@
                                 nil))
                   last-index (loop [z z
                                     ret nil]
-                               (when (not (= (get bool z) "not"))
+                               (if (not (= (get bool z) "not"))
                                  (if (= z (count length-z)) ret
                                      (recur (inc z)
                                             (inc z)))
@@ -356,24 +369,33 @@
               ())))
         (let [pointer (.parseInt (first pointer))
               pointer-count pointer]
-          (when has-not
+          (if has-not
             (let [check-not {}])
             (let [bool-main (and (string? bool) bool)]
               (when)))))
       ())))
 
-
 (defn intersect [arrays limit cursor suggest bool has-and has-not];;SIN TERMINAR
   (let [result []]
-    (when (= true cursor)
-      (let[cursor 0
-           pointer ""
-           length-z (count arrays)]
-       (when (< 1 length-z)
+    (if (= true cursor)
+      (let [cursor 0
+            pointer ""
+            length-z (count arrays)]
+        (if (< 1 length-z)
           ()
           ()))
       (let [pointer (and cursor (str/split cursor #":"))
             length-z (count arrays)]
-        (when (< 1 length-z)
+        (if (< 1 length-z)
           ()
           ())))))
+
+
+#_(INTERSECT
+   (LENGTH-Z > 1
+             (FOR
+              INIT
+              INNER-FOR)
+             (FIRST-RESULT))
+   (LENGTH-Z)
+   (LIMIT))
