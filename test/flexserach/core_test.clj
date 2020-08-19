@@ -107,3 +107,20 @@
   (is (= (f/global-encoder-balance "-/") " "))
   (is (= (f/global-encoder-balance "hhHçkjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "hkjas aslk28jsysd ae ou c k"))
   (is (= (f/global-encoder-balance "kjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "kjas aslk28jsysd ae ou c k")))
+
+(deftest create-page-test
+  (is (map? (f/create-page "kjnk" "kjask" "asdas")))
+  (is (string? ((f/create-page "kjnk" "kjask" "asdas") :next)))
+  (is (vector? ((f/create-page "kjnk" "kjask" [1 2 3]) :result)))
+  (is (= ((f/create-page "kjnk" "kjask" "asdas") :next) "kjask"))
+  (is (= (f/create-page nil "kjask" "asdas") "asdas"))
+  (is (= true ((f/create-page true "kjask" "asdas") :page)))
+  (is (= ((f/create-page "kjnk" false "asdas") :next) nil)))
+
+(deftest encode-test
+  (is (= (f/encode :balance "efssdfsddddddfs") "efsdfsdfs"))
+  (is (thrown? Exception (f/encode :balances "efssdfsddddddfs"))))
+
+(deftest build-dupes-test
+  (is (vector? (f/build-dupes {:resolution 9 :threshold 0})))
+  (is (= (f/build-dupes {:resolution 7 :threshold nil}) [{} {} {} {} {} {} {}])))

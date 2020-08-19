@@ -159,27 +159,29 @@
    :extra global-encoder-extra
    :balance global-encoder-balance})
 
-(defn create-page [cursor page result];;FALTAN LOS TESTS, NO SE LOS INPUTS
+(defn create-page [cursor page result]
   ;; TODO str page?
   (if cursor
     {:page cursor, :next (if page (str page) nil), :result result}
     result))
 
-(defn add-index [map dupes value id partial-score context-score threshold resolution];;FALTAN LOS TESTS, NO SE LOS INPUTS
+(defn add-index [map dupes value id partial-score context-score threshold resolution];;FALTAN LOS TESTS
   (if (get dupes value)
     (get dupes value)
     (let [score (if partial-score
-                  (+ (* (resolution (or threshold (/ resolution 1.5))) context-score)
-                     (* (or (threshold (/ resolution 1.5))) partial-score))
+                  (+ (* (- resolution (or threshold (/ resolution 1.5))) context-score)
+                     (* (or threshold (/ resolution 1.5)) partial-score))
                   context-score)
           dupes (assoc dupes value score)
-          arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)))
+          arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)));;NO FUNCIONA CON DOUBLES
           arr (or (get arr value) (assoc arr value []))
           arr (assoc arr (count arr) id)]
       {:score score :dupes dupes :arr arr})))
 
-(defn encode [name value];;FALTAN LOS TESTS, NO SE LOS INPUTS
-  ((name global-encoder) value))
+(defn encode [name value]
+  (if-let [encoder (global-encoder name)]
+    (encoder value)
+    (throw (Exception. "No encoder"))))
 
 (defn filter-words [words fn-or-map];;FALTAN LOS TESTS, NO SE LOS INPUTS
   (let [lenght (count words)
@@ -276,6 +278,72 @@
             (limit-true result pointer limit cursor)
             (create-page cursor page result)))))))
 
+(defn for-chico [z length arr has-and check has-not check-not is-final-loop
+                 pointer-count result count limit cursor pointer found]
+  (let [bool-or nil]
+    (loop [i 0
+           tmp (get arr i)
+           index (str "@" tmp)
+           check-val (if has-and (or (get check index) 0) z)
+           check check
+           found found
+           count count
+           pointer-count pointer-count
+           result result]
+      (cond (= i length) {:check check
+                          :found found
+                          :count count
+                          :pointer-count pointer-count
+                          :result result}
+            (and (< 0 i)
+                 check-val
+                 (not (and has-not (get check-not index)))
+                 (not (and (not has-and) (get check index)))
+                 (= z check-val)
+                 (or is-final-loop bool-or)
+                 (or (not pointer-count) (< (dec pointer-count) count))
+                 (and limit (= limit count))) {:return (create-page cursor (+ count (or pointer 0)) result)}
+            :else (recur (inc i) ;;i
+                         (get arr (inc i)) ;;tmp
+                         (str "@" (get arr (inc i))) ;;index
+                         (if has-and (or (get check (str "@" (get arr (inc i)))) 0) z) ;;check-val
+                         (if (and check-val ;;check
+                                  (not (and has-not (get check-not index)))
+                                  (not (and (not has-and) (get check index)))
+                                  (= z check-val)
+                                  (not (or is-final-loop bool-or)))
+                           (assoc check index (+ z 1))
+                           check)
+                         (if (and check-val ;;found
+                                  (not (and has-not (get check-not index)))
+                                  (not (and (not has-and) (get check index)))
+                                  (= z check-val))
+                           true
+                           found)
+                         (if (and check-val ;;count
+                                  (not (and has-not (get check-not index)))
+                                  (not (and (not has-and) (get check index)))
+                                  (= z check-val)
+                                  (or is-final-loop bool-or)
+                                  (or (not pointer-count) (< (dec pointer-count) count)))
+                           (inc count)
+                           count)
+                         (if (and check-val ;;pointer-count
+                                  (not (and has-not (get check-not index)))
+                                  (not (and (not has-and) (get check index)))
+                                  (= z check-val)
+                                  (or is-final-loop bool-or));;PREGUNTAR A GAL SI LA CONDICION TERMINA ACA O TENGO QUE INCLUIR EL SIGUIENTE OR EN EL QUE YA ESTA POINTER-COUNT
+                           (dec pointer-count)
+                           pointer-count)
+                         (if (and check-val ;;result
+                                  (not (and has-not (get check-not index)))
+                                  (not (and (not has-and) (get check index)))
+                                  (= z check-val)
+                                  (or is-final-loop bool-or)
+                                  (or (not pointer-count) (< (dec pointer-count) count)))
+                           (assoc result count tmp)
+                           result))))))
+
 (defn for-init-true [result-length first-result has-not check-not check has-and result count]
   (loop [i 0
          id (get first-result i)
@@ -306,7 +374,136 @@
     (let [result-length (count first-result)]
       (merge {:first-result nil :init false}
              (for-init-true result-length first-result has-not check-not check has-and result count)))
-    arr))
+    {:first-result arr}))
+
+(defn for-grande [z last-index length-z arrays cursor page init first-result has-not check-not
+                  check result count pointer-count limit pointer]
+  (let [bool-and true
+        has-and true
+        found false]
+    (loop [z z
+           is-final-loop (= z (- (or last-index length-z) 1))
+           arr (get arrays z)
+           length (count arr)
+           first-result first-result
+           init init
+           check check
+           result result
+           count count
+           found found
+           for-c (for-chico z length arr has-and
+                            (if (and init first-result)
+                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                              check)
+                            has-not check-not is-final-loop pointer-count
+                            (if (and init first-result)
+                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                              result)
+                            (if (and init first-result)
+                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                              count)
+                            limit cursor pointer found)]
+      (cond (or (= z length-z)
+                (and (< 0 z) (and bool-and (not found)))) {:first-result first-result
+                                                           :init init
+                                                           :check check
+                                                           :result result
+                                                           :count count
+                                                           :found found}
+            (and (not length) bool-and) {:return (create-page cursor page arr)}
+            (for-c :return) {:return (for-c :return)}
+            :else (recur (inc z) ;;z
+                         (= (inc z) (- (or last-index length-z) 1)) ;;is-final-loop
+                         (get arrays (inc z)) ;;arr
+                         (count (get arrays (inc z))) ;;length
+                         (if (not length) ;;first-result
+                           first-result
+                           (if init
+                             (if first-result
+                               nil
+                               arr)
+                             first-result))
+                         (if (not length) ;;init
+                           init
+                           (if (and init first-result)
+                             false
+                             init))
+                         (if (not length) ;;check
+                           check
+                           (if (and init (not first-result))
+                             check
+                             ((for-chico z length arr has-and
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                                           check)
+                                         has-not check-not is-final-loop pointer-count
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                                           result)
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                                           count)
+                                         limit cursor pointer found) :check)))
+                         (if (not length) ;;result
+                           result
+                           (if (and init (not first-result))
+                             result
+                             ((for-chico z length arr has-and
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                                           check)
+                                         has-not check-not is-final-loop pointer-count
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                                           result)
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                                           count)
+                                         limit cursor pointer found) :result)))
+                         (if (not length) ;;count
+                           count
+                           (if (and init (not first-result))
+                             count
+                             ((for-chico z length arr has-and
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                                           check)
+                                         has-not check-not is-final-loop pointer-count
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                                           result)
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                                           count)
+                                         limit cursor pointer found) :count)))
+                         (if (not length) ;;found
+                           found
+                           (if (and init (not first-result))
+                             found
+                             ((for-chico z length arr has-and
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                                           check)
+                                         has-not check-not is-final-loop pointer-count
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                                           result)
+                                         (if (and init first-result)
+                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                                           count)
+                                         limit cursor pointer found) :found)))
+                         (for-chico z length arr has-and
+                                    (if (and init first-result)
+                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
+                                      check)
+                                    has-not check-not is-final-loop pointer-count
+                                    (if (and init first-result)
+                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
+                                      result)
+                                    (if (and init first-result)
+                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
+                                      count)
+                                    limit cursor pointer found))))))
 
 (defn for-first-result-true [i first-result result-length result check-not count]
   (loop [i i
@@ -324,72 +521,84 @@
                  (assoc result count id)
                  result)))))
 
-(defn first-result-true [first-result has-not pointer result check-not] 
+(defn first-result-true [first-result has-not pointer result check-not]
   (let [result-length (count first-result)]
     (if has-not
       (if pointer
         (for-first-result-true (.parseInt pointer) first-result result-length result check-not pointer)
         (for-first-result-true 0 first-result result-length result check-not pointer))
-      first-result)))
+      {:result first-result})))
 
-(defn length-z>1 [];;SIN TERMINAR
+(defn length-z>1 [pointer last-index length-z arrays cursor page has-not check-not result
+                  pointer-count limit]
   (let [check {}
-        suggestions []
         z 0
-        i 0
         init true
-        count 0]
-    (when pointer
-      (when (= 2 (count pointer))
-        (let [pointer-suggest pointer
-              pointer false]
-          (if has-not
-            (let [check-not (loop [z z
-                                   ret {}]
-                              (if (= (get bool z) "not")
-                                (if (= z (count length-z)) ret
-                                    (recur (inc z)
-                                           (loop [i 0
-                                                  ret {}]
-                                             (if (= i (count (get arrays z))) ret
-                                                 (recur (inc i)
-                                                        (assoc ret (str "@" (get (get arrays z) i)) 1))))))
-                                nil))
-                  last-index (loop [z z
-                                    ret nil]
-                               (if (not (= (get bool z) "not"))
-                                 (if (= z (count length-z)) ret
-                                     (recur (inc z)
-                                            (inc z)))
-                                 nil))]
-              (when (= last-index nil)
-                (do (create-page cursor page result)
-                    (let [z 0]))))
-            (let [bool-main (and (string? bool) bool)]
-              ())))
+        count 0
+        first-result nil]
+    (if pointer
+      (if (= 2 (count pointer))
+        (let [pointer false
+              for-g (for-grande z last-index length-z arrays cursor page init first-result
+                                has-not check-not check result count pointer-count limit pointer)]
+          (if (for-g :return)
+            for-g
+            (if first-result
+              (merge for-g (first-result-true first-result has-not pointer result check-not) {:pointer pointer})
+              for-g)))
         (let [pointer (.parseInt (first pointer))
-              pointer-count pointer]
-          (if has-not
-            (let [check-not {}])
-            (let [bool-main (and (string? bool) bool)]
-              (when)))))
-      ())))
+              pointer-count pointer
+              for-g (for-grande z last-index length-z arrays cursor page init first-result
+                                has-not check-not check result count pointer-count limit pointer)]
+          (if (for-g :return)
+            for-g
+            (if first-result
+              (merge for-g (first-result-true first-result has-not pointer result check-not) {:pointer pointer})
+              for-g))))
+      (let [for-g (for-grande z last-index length-z arrays cursor page init first-result
+                              has-not check-not check result count pointer-count limit pointer)]
+        (if (for-g :return)
+          for-g
+          (if first-result
+            (merge for-g (first-result-true first-result has-not pointer result check-not))
+            for-g))))))
 
-(defn intersect [arrays limit cursor suggest bool has-and has-not];;SIN TERMINAR
+(defn intersect [arrays limit cursor bool has-not]
   (let [result []]
     (if (= true cursor)
       (let [cursor 0
             pointer ""
             length-z (count arrays)]
         (if (< 1 length-z)
-          ()
-          ()))
+          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not nil result nil limit)]
+            (if (lz :return)
+              (lz :return)
+              (if length-z
+                (length-z-true bool arrays (lz :pointer) limit cursor nil)
+                (if limit
+                  (limit-true (lz :result) (lz :pointer) limit cursor)
+                  (create-page cursor nil (lz :result))))))
+          (if length-z
+            (length-z-true bool arrays pointer limit cursor nil)
+            (if limit
+              (limit-true result pointer limit cursor)
+              (create-page cursor nil result)))))
       (let [pointer (and cursor (str/split cursor #":"))
             length-z (count arrays)]
         (if (< 1 length-z)
-          ()
-          ())))))
-
+          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not nil result nil limit)]
+            (if (lz :return)
+              (lz :return)
+              (if length-z
+                (length-z-true bool arrays (lz :pointer) limit cursor nil)
+                (if limit
+                  (limit-true (lz :result) (lz :pointer) limit cursor)
+                  (create-page cursor nil (lz :result))))))
+          (if length-z
+            (length-z-true bool arrays pointer limit cursor nil)
+            (if limit
+              (limit-true result pointer limit cursor)
+              (create-page cursor nil result))))))))
 
 #_(INTERSECT
    (LENGTH-Z > 1
