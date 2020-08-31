@@ -7,3 +7,4 @@ flex-comentado.cljc
 trabajo.clj
 javascript.clj
 javascript.js
+*.log

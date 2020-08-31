@@ -1,6 +1,6 @@
-(ns flexserach.core-test
+(ns flexsearch.core-test
   (:require [clojure.test :refer [deftest is]]
-            [flexserach.core :as f]))
+            [flexsearch.core :as f]))
 
 (deftest sort-by-length-down-test
   (is (= (f/sort-by-length-down "abc" "ab") -1))
@@ -117,10 +117,52 @@
   (is (= true ((f/create-page true "kjask" "asdas") :page)))
   (is (= ((f/create-page "kjnk" false "asdas") :next) nil)))
 
-(deftest encode-test
-  (is (= (f/encode :balance "efssdfsddddddfs") "efsdfsdfs"))
-  (is (thrown? Exception (f/encode :balances "efssdfsddddddfs"))))
+(deftest remove-index-test
+  (is (= (f/remove-index {:a [2 3 2] :b []} 2) {:a [3 2], :b []}))
+  (is (= (f/remove-index {:a [2 3 2] :b []} 1) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {:a [2 2 3 2] :b []} 2) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {} 2) nil))
+  (is (= (f/remove-index {:a [2 3 2] :b [2]} 2) {:a [3 2]}))
+  (is (= (f/remove-index {:a [2 3 2 {:a []}] :b []} 2) {:a [3 2 {:a []}] :b []}))
+  (is (= (f/remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
 
 (deftest build-dupes-test
   (is (vector? (f/build-dupes {:resolution 9 :threshold 0})))
   (is (= (f/build-dupes {:resolution 7 :threshold nil}) [{} {} {} {} {} {} {}])))
+
+(deftest init-test
+  (is (= (f/init {:resolution 9 :threshold 9 :preset :memory :encoder nil}) {:async false
+                                                                             :filterer nil
+                                                                             :timer 0
+                                                                             :encoder nil
+                                                                             :threshold 0
+                                                                             :resolution 1
+                                                                             :preset :memory
+                                                                             :split #"\W+"
+                                                                             :cache false
+                                                                             :tokenize "strict"
+                                                                             :id {}
+                                                                             :fmap [{}]
+                                                                             :depth 0
+                                                                             :encode "extra"
+                                                                             :ctx {}
+                                                                             :doc false
+                                                                             :worker false
+                                                                             :rtl false}));;falla por el regex aun sacandolo del def y poniendolo aparte
+  (is (= ((f/init {:resolution 9 :threshold 9 :preset :memory :encoder nil}) :resolution) 1))
+  (is (= ((f/init {:resolution 0 :threshold 0 :preset :memory :encoder nil}) :resolution) 1)))
+
+(deftest encode-test
+  (is (= (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :-matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
+
+(deftest filter-words-test
+  (is (= (f/filter-words ["and" "sdfsdf"] #{"and"}) {:filtered ["sdfsdf"], :count 1}))
+  (is (= (f/filter-words ["and" "sdfsdf"] #{}) {:filtered ["and" "sdfsdf"], :count 2}))
+  (is (= (f/filter-words ["and" "sdfsdf"] #{"zsc"}) {:filtered ["and" "sdfsdf"], :count 2}))
+  (is (= (f/filter-words [] #{"zsc"}) {:filtered [], :count 0}))
+  (is (= ((f/filter-words [] #{"zsc"}) :count) 0))
+  (is (= (count ((f/filter-words [] #{"zsc"}) :filtered)) 0))
+  (is (= ((f/filter-words ["and"] #{"zsc"}) :count) 1))
+  (is (= (count ((f/filter-words ["and"] #{"zsc"}) :filtered)) 1))
+  (is (vector? ((f/filter-words [] #{"zsc"}) :filtered)))
+  (is (number? ((f/filter-words [] #{"zsc"}) :count))))

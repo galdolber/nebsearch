@@ -1,10 +1,11 @@
-(ns flexserach.core
+(ns flexsearch.core
   (:require [clojure.string :as str]))
+
+(def whitespaces #"\W+")
 
 (def defaults
   {:encode "icase"
    :tokenize "forward"
-   :split #"\W+"
    :cache false
    :async false
    :worker false
@@ -12,7 +13,8 @@
    :doc false
    :resolution 9
    :threshold 0
-   :depth 0})
+   :depth 0
+   :split whitespaces})
 
 (def presets
   {:memory {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
@@ -21,7 +23,6 @@
    :score {:encode "extra" :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
    :balance {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
    :fast {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
-
 
 (defn sort-by-length-down [a b] (cond
                                   (> (count a) (count b)) -1
@@ -165,7 +166,7 @@
     {:page cursor, :next (if page (str page) nil), :result result}
     result))
 
-(defn add-index [map dupes value id partial-score context-score threshold resolution];;FALTAN LOS TESTS
+(defn add-index [map dupes value id partial-score context-score threshold resolution]
   (if (get dupes value)
     (get dupes value)
     (let [score (if partial-score
@@ -176,44 +177,9 @@
           arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)));;NO FUNCIONA CON DOUBLES
           arr (or (get arr value) (assoc arr value []))
           arr (assoc arr (count arr) id)]
-      {:score score :dupes dupes :arr arr})))
-
-(defn encode [name value]
-  (if-let [encoder (global-encoder name)]
-    (encoder value)
-    (throw (Exception. "No encoder"))))
-
-(defn filter-words [words fn-or-map];;FALTAN LOS TESTS, NO SE LOS INPUTS
-  (let [lenght (count words)
-        has-function (fn? fn-or-map)]
-    (loop [word (get words 0)
-           filtered []
-           c 0]
-      (if (= c lenght) filtered
-          (recur (get words (inc c))
-                 (if (or (and has-function (fn-or-map word))
-                         (and (not has-function) (not (get fn-or-map word))))
-                   (conj filtered word)
-                   filtered)
-                 (inc c))))))
-
-(defn build-dupes [{:keys [resolution threshold]}]
-  (vec (repeat (- resolution (or threshold 0)) {})))
-
-(defn init [options]
-  (let [{:keys [threshold resolution] :as options}
-        (-> defaults (merge options) (merge (presets (:preset options))))
-        options (update options :resolution #(if (<= % threshold) (inc threshold) %))
-        {:keys [encoder resolution] :as options}
-        (update options :encoder #(or (global-encoder %) %))
-        options (update options :filterer #(when % (set (mapv encoder %))))]
-    (into
-     options
-     {:fmap (build-dupes options)
-      :ctx {}
-      :id {}
-      :timer 0})))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      {:score score
+       :dupes dupes
+       :arr (if (<= threshold score) arr nil)})))
 
 (defn remove-index [map id]
   (loop [coll (vec map)
@@ -229,14 +195,86 @@
                (loop [vals value
                       rett []
                       cc 0]
-                 (if (= cc (count value)) (conj ret [key rett])
-                     (recur
-                      (rest vals)
-                      (cond (map? (first vals)) (conj rett (remove-index (first vals) id))
-                            (= id (first vals)) rett
-                            (not= id (first vals)) (conj rett (first vals)))
-                      (inc cc)))))
+                 (cond (= cc (count value)) (conj ret [key rett])
+                       (= id (first vals)) (conj ret [key (into rett (rest vals))])
+                       :else (recur
+                              (rest vals)
+                              (cond (map? (first vals)) (conj rett (remove-index (first vals) id))
+                                    (= id (first vals)) rett
+                                    (not= id (first vals)) (conj rett (first vals)))
+                              (inc cc)))))
            (inc c))))))
+
+(defn encode [{:keys [encoder stemmer -matcher] :as object} value];;NO FUNCIONA CON :ENCODER GLOBAL-ENCODER-ADVANCED PORQUE TIENE 2 ARGUMENTOS
+  (let [global-matcher []]
+    (when value
+      (cond
+        stemmer (replace-regexes (if encoder
+                                   (encoder (if (count -matcher)
+                                              (replace-regexes (if (count global-matcher)
+                                                                 (replace-regexes value
+                                                                                  global-matcher)
+                                                                 value) -matcher)
+                                              value))
+                                   value) stemmer)
+        encoder (encoder (if (count -matcher)
+                           (replace-regexes (if (count global-matcher)
+                                              (replace-regexes value
+                                                               global-matcher)
+                                              value) -matcher)
+                           value))
+        (count -matcher) (replace-regexes (if (count global-matcher)
+                                            (replace-regexes value
+                                                             global-matcher)
+                                            value) -matcher)
+        (count global-matcher) (replace-regexes value
+                                                global-matcher)
+        :else "error"))))
+
+(defn filter-words [words fn-or-map];;FALTAN LOS TESTS, NO SE LOS INPUTS
+  (let [length (count words)
+        has-function (fn? fn-or-map)]
+    (loop [i 0
+           word (get words 0)
+           filtered []
+           count 0]
+      (if (= i length) {:filtered filtered
+                        :count count}
+          (recur (inc i)
+                 (get words (inc i))
+                 (if (or (and has-function (fn-or-map word))
+                         (and (not has-function) (not (get fn-or-map word))))
+                   (assoc filtered count word)
+                   filtered)
+                 (if (or (and has-function (fn-or-map word))
+                         (and (not has-function) (not (get fn-or-map word))))
+                   (inc count)
+                   count))))))
+
+(defn build-dupes [{:keys [resolution threshold]}]
+  (vec (repeat (- resolution (or threshold 0)) {})))
+
+(defn init [options]
+  (let [{:keys [threshold] :as options} (-> defaults
+                                            (merge options)
+                                            (merge (presets (:preset options))))
+        options (update options
+                        :resolution
+                        #(if (<= % threshold) (inc threshold) %))
+        {:keys [encoder] :as options} (update options
+                                              :encoder
+                                              #(or (global-encoder %) %))
+        options (update options
+                        :filterer
+                        #(when % (set (mapv encoder %))))]
+    (into
+     options
+     {:fmap (build-dupes options)
+      :ctx {}
+      :id {}
+      :timer 0})))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;ACA VIENEN:
 ;;REMOVE-FLEX
