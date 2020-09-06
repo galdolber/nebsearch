@@ -276,16 +276,195 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;ACA VIENEN:
-;;REMOVE-FLEX
-;;UPDATE-FELX
-;;FORWARD-TOKENIZER
-;;REVERSE-TOKENIZER
-;;FULL-TOKENIZER
-;;DEFAULT-TOKENIZER
-;;ADD-FLEX
+(defn for-remove-flex [resolution threshold -map id]
+  (loop [z 0
+         -map -map
+         ret []]
+    (if (= z (- resolution (or threshold 0))) ret
+        (recur (inc z)
+               (rest -map)
+               (conj ret (remove-index (first -map) id))))))
 
-;;ESTAS PERTENECEN A INTERSECT:
+(defn remove-flex [{:keys [-ids depth -map resolution threshold -ctx] :as flex}
+                   id callback -recall]
+  (let [index (str "@" id)]
+    (if (-ids index)
+      (if (and (not -recall)
+               callback)
+        (callback (remove-flex flex id nil true));;??? como hago con callback que se llama sin ningun argumento?. creo mque asi esta bien ya que la estaria llamando sobre el flex.. pero porque no figura como this en el js????
+        (assoc (if depth
+                 (assoc flex
+                        :-ctx (remove-index -ctx id)
+                        :-map (for-remove-flex resolution threshold -map id))
+                 (assoc flex
+                        :-map (for-remove-flex resolution threshold -map id)))
+               :-ids (dissoc -ids index)))
+      flex)));;ver si hace falta devolver algun otro objeto modificado junto a flex
+
+(declare add)
+(defn update-flex [{:keys [-ids] :as flex}
+                   id content callback -recall];;callback es de support-callback?
+  (let [index (str "@" id)]
+    (if (and (-ids index) (string? content))
+      (add (remove-flex flex id callback -recall) id content callback true nil)
+      flex)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn reverse-t [length value -map dupes id rtl context-score threshold resolution]
+  (loop [a length
+         b (dec a)
+         token (str (get value b) "")
+         dupes dupes
+         ret {}]
+    (if (= 0 a) {:token token :score (ret :score) :dupes (ret :dupes) :arr (ret :arr)}
+        (recur (dec a)
+               (dec b)
+               (str (get value (dec b)))
+               ((add-index -map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)) :dupes)
+               (merge ret (add-index -map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)))))))
+
+(defn forward-t [value dupes length -map id rtl context-score threshold resolution]
+  (loop [a 0
+         token (get value a)
+         dupes dupes
+         ret {}]
+    (if (= a length) (merge {:token token} ret)
+        (recur (inc a)
+               (str token (get value (inc a)))
+               ((add-index -map dupes token id (if rtl (/ (+ (inc a) 1) length) 1) context-score threshold (dec resolution)) :dupes)
+               (merge ret (add-index -map dupes token id (if rtl (/ (+ (inc a) 1) length) 1) context-score threshold (dec resolution)))))))
+
+(defn for-full-t [x length value -map dupes id partial-score context-score threshold resolution]
+  (loop [y length
+         token (subs value x y)
+         dupes dupes
+         ret {}]
+    (if (= y x) (merge {:token token} ret)
+        (recur (dec y)
+               (subs value x (dec y))
+               ((add-index -map dupes token id partial-score context-score threshold (dec resolution)) :dupes)
+               (merge ret (add-index -map dupes token id partial-score context-score threshold (dec resolution)))))))
+
+(defn full-t [rtl length value -map dupes id context-score threshold resolution]
+  (loop [x 0
+         partial-score (/ (if rtl (inc x) (- length x)) length)
+         ret {}]
+    (if (= x length) (merge {:partial-score partial-score} ret)
+        (recur (inc x)
+               (/ (if rtl (inc (inc x)) (- length (inc x))) length)
+               (merge ret (for-full-t x length value -map dupes id partial-score context-score threshold resolution))))))
+
+(defn create-object-array [count]
+  (vec (concat [] (repeat count {}))))
+
+
+(defn default-t [flex
+                 -map dupes value id context-score threshold resolution depth word-length i words]
+  (let [result (add-index -map dupes value id 1 context-score threshold (dec resolution))
+        score (or (result :score) result);;ver si en verdad necesito solo :score o es todo el mapa
+        dupes (result :dupes)]
+    (if (and depth (< 1 word-length) (<= threshold score))
+      (let [ctxdupes (or (get-in dupes [:-ctx value])
+                         (assoc-in dupes [:-ctx value] {}))
+            ctxtmp (or (get-in flex [:-ctx value])
+                       (assoc-in flex [:-ctx value] (vec (concat [] (repeat (- resolution (or threshold 0)) {})))))
+            x (if (< (- i depth) 0) 0 (- i depth))
+            y (if (< word-length (+ i depth 1)) word-length (+ i depth 1))
+            a-i (loop [x x
+                       dupes dupes
+                       ret {}]
+                  (if (= x y) ret
+                      (recur (inc x)
+                             (if (not= x i)
+                               ((add-index ctxtmp ctxdupes (get words (inc x)) id 0 (- resolution (if (< (inc x) i) (- i (inc x)) (- (inc x) i))) threshold (dec resolution)) :dupes)
+                               dupes)
+                             (if (not= x i)
+                               (merge ret (add-index ctxtmp ctxdupes (get words (inc x)) id 0 (- resolution (if (< (inc x) i) (- i (inc x)) (- (inc x) i))) threshold (dec resolution)))
+                               ret))))]
+        (merge flex result a-i))
+      (merge flex result))))
+
+(defn for-add [flex
+               words rtl word-length tokenizer dupes -map id threshold resolution depth]
+  (loop [i 0
+         value (get words i)
+         length (count value)
+         context-score (/ (if rtl
+                            (+ i 1)
+                            (- word-length i))
+                          word-length)
+         token nil
+         ret {}]
+    (cond (and value
+               (= i word-length)) (merge flex
+                                         {:value value
+                                          :length length
+                                          :context-score context-score
+                                          :token token};;como se si todos estos valores van en el flex o afuera?
+                                         ret)
+          (= i word-length) (merge flex {:value value})
+          :else (recur (inc i);;i
+                       (get words (inc i));;value
+                       (if value;;length
+                         (count (get words (inc i)))
+                         length)
+                       (if value;;context-score
+                         (/ (if rtl
+                              (inc (+ i 1))
+                              (- word-length (inc i)))
+                            word-length)
+                         context-score)
+                       (if value;;token
+                         (case tokenizer
+                           ("both" "reverse") ""
+                           "forward" ((forward-t value dupes length -map id rtl context-score threshold resolution) :token)
+                           "full" ((full-t rtl length value -map dupes id context-score threshold resolution) :token)
+                           "default" token)
+                         token)
+                       (if value;;ret
+                         (case tokenizer
+                           ("both" "reverse") (merge ret (reverse-t length value -map dupes id rtl context-score threshold resolution))
+                           "forward" (merge ret (forward-t value dupes length -map id rtl context-score threshold resolution))
+                           "full" (merge ret (full-t rtl length value -map dupes id context-score threshold resolution))
+                           "default" (merge ret (default-t flex -map dupes value id context-score threshold resolution depth word-length i words)))
+                         ret)))))
+
+(defn add [{:keys [-ids tokenize split filter threshold depth resolution -map rtl] :as flex}
+           id content callback -skip-update -recall]
+  (cond
+    (and content
+         (string? content)
+         (or id (= id 0))
+         (and (-ids (str "@" id)) (not -skip-update))) (update-flex flex id content nil nil)
+    (and content
+         (string? content)
+         (or id (= id 0))
+         (not -recall)
+         callback) (callback (add flex id content nil -skip-update true));;ver como aplico callback, aridad y como son las funciones que ingreso a traves de el
+    (and content
+         (string? content)
+         (or id (= id 0))) (let [content (encode flex content)]
+                             (if (not (count content))
+                               (assoc flex :content content)
+                               (let [tokenizer tokenize
+                                     words (if (fn? tokenizer)
+                                             (tokenizer content)
+                                             (str/split content split))
+                                     words (if filter
+                                             (filter-words words filter)
+                                             words)
+                                     dupes {:-ctx {}}
+                                     word-length (count words)
+                                     fff (for-add flex words rtl word-length tokenizer dupes -map id threshold resolution depth)
+                                     fff (assoc-in fff [-ids (str "@" id)] 1)
+                                     fff (merge fff {:tokenizer tokenizer
+                                                     :words words
+                                                     :word-length word-length})]
+                                 fff)))
+    :else flex))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn limit-true [result pointer limit cursor]
   (let [length (count result)]
