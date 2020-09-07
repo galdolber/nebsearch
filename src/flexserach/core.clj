@@ -817,6 +817,167 @@
               (limit-true result pointer limit cursor)
               (create-page cursor nil result))))))))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn for-search-inner [resolution threshold map-value map value]
+  (loop [z 0
+         map-check []
+         count 0
+         map-found false]
+    (if (= z (- resolution threshold)) {:map-check map-check
+                                        :count count
+                                        :map-found map-found}
+        (recur (inc z)
+               (if (= map-value (and (get map z) (get (get map z) value)))
+                 (assoc map-check count map-value)
+                 map-check)
+               (if (= map-value (and (get map z) (get (get map z) value)))
+                 (inc count)
+                 count)
+               (if (= map-value (and (get map z) (get (get map z) value)))
+                 true
+                 map-found)))))
+
+(defn for-search [{:keys [resolution threshold -map] :as flex}
+                  words use-contextual ctx-map length]
+  (loop [a 0
+         value (get words a)
+         ctx-root nil
+         check-words {}
+         map-check []
+         map-found false
+         countt 0
+         map (if use-contextual (get ctx-map ctx-root) -map)
+         check []]
+    (cond (= a length) {:value value
+                        :ctx-root ctx-root
+                        :check-words check-words
+                        :map-check map-check
+                        :map-found map-found
+                        :count countt
+                        :map map
+                        :check check}
+          (and value
+               use-contextual
+               (not ctx-root)
+               (not (get ctx-map value))) {:value value
+                                           :return []}
+          :else (recur
+                 ;;a
+                 (inc a)
+                 ;;value
+                 (get words (inc a))
+                 ;;ctx-root
+                 (if (and value
+                          use-contextual
+                          (not ctx-root)
+                          (get ctx-map value))
+                   value
+                   (if (and value
+                            use-contextual
+                            (not ctx-root))
+                     ctx-root
+                     (if (and value
+                              (not (get check-words value))
+                              map-found)
+                       value
+                       ctx-root)))
+                 ;;check-words
+                 (if (and value
+                          use-contextual
+                          (not ctx-root)
+                          (get ctx-map value))
+                   (assoc check-words value 1)
+                   (if (and value
+                            use-contextual
+                            (not ctx-root))
+                     check-words
+                     (if (and value
+                              (not (get check-words value)))
+                       (assoc check-words value 1)
+                       check-words)))
+                 ;;map-check
+                 (if (and value
+                          (not (get check-words value))
+                          map)
+                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                     (for-in :map-check))
+                   map-check)
+                 ;;map-found
+                 (if (and value
+                          (not (get check-words value))
+                          map)
+                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                     (for-in :map-found))
+                   map-found)
+                 ;;countt
+                 (if (and value
+                          (not (get check-words value)))
+                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                     (for-in :countt))
+                   countt)
+                 ;;map
+                 (if (and value
+                          (not (get check-words value)))
+                   (if use-contextual (get ctx-map ctx-root) (get this -map))
+                   map)
+                 ;;check
+                 (if (and value
+                          (not (get check-words value))
+                          map-found)
+                   (assoc check (countt check) (if (< 1 countt)
+                                                 (concat map-check (concat [] map-check));;corroborar si esta bien
+                                                 (get map-check 0)))
+                   check)))))
+
+(defn search [{:keys [threshold tokenize split filter depth -ctx] :as flex}
+              query limit callback -recall]
+  (let [callback (if (and limit (fn? limit))
+                   limit
+                   callback)
+        limit (if (and limit (fn? limit))
+                1000
+                (or limit (= limit 0) (= limit 1000)))
+        result []
+        -query query
+        threshold (or threshold 0)
+        flex (merge flex {:limit limit
+                          :threshold threshold})];;corroborar si esto y limit estan bien
+    (if (and (not -recall)
+             callback)
+      (callback (search flex -query limit nil true));;callback deberia devolver flex....verificarlo
+      (if (or (not query) (not (string? query)))
+        (merge flex {:result result})
+        (let [-query query;;esto me parece que hay que sacarlo... no tiene ningun sentido
+              -query (encode flex -query);;ver si el -query va en value o en flex
+              tokenizer tokenize
+              words (if (fn? tokenizer)
+                      (tokenizer -query)
+                      (str/split -query split))
+              words (if filter
+                      (filter-words words filter)
+                      words)
+              length (count words)
+              found true
+              use-contextual (if (and (< 1 length) (and depth (= tokenize "strict")))
+                               true
+                               nil)
+              words (if (and (< 1 length) (not (and depth (= tokenize "strict"))))
+                      (reverse (sort words))
+                      words)
+              ctx-map nil]
+          (if (not (count -query))
+            (merge flex {:result result})
+            (if (or (not use-contextual) (= ctx-map -ctx))
+              (let [fs (for-search flex words use-contextual ctx-map length)]
+                (if (fs :result)
+                  (merge flex fs)
+                  (if found
+                    (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
+                    (merge flex {:result result}))))
+              (merge flex {:result result}))))))))
+
 #_(INTERSECT
    (LENGTH-Z > 1
              (FOR
