@@ -167,19 +167,18 @@
     result))
 
 (defn add-index [map dupes value id partial-score context-score threshold resolution]
-  (if (get dupes value)
-    (get dupes value)
-    (let [score (if partial-score
-                  (+ (* (- resolution (or threshold (/ resolution 1.5))) context-score)
-                     (* (or threshold (/ resolution 1.5)) partial-score))
-                  context-score)
-          dupes (assoc dupes value score)
-          arr (get map (- resolution (bit-shift-right (+ score 0.5) 0)));;NO FUNCIONA CON DOUBLES
-          arr (or (get arr value) (assoc arr value []))
-          arr (assoc arr (count arr) id)]
-      {:score score
-       :dupes dupes
-       :arr (if (<= threshold score) arr nil)})))
+  (or (dupes value)
+      (let [score (if (pos? partial-score)
+                    (+ (* (- resolution (or threshold (/ resolution 1.5))) context-score)
+                       (* (or threshold (/ resolution 1.5)) partial-score))
+                    context-score)
+            dupes (assoc dupes value score)
+            arr (get map (- resolution (bit-shift-right (int (+ score 0.5)) 0)))
+            arr (or (get arr value) (assoc arr value []))
+            arr (assoc arr (count arr) id)]
+        {:score score
+         :dupes dupes
+         :arr (if (<= threshold score) arr nil)})))
 
 (defn remove-index [map id]
   (loop [coll (vec map)
@@ -237,19 +236,19 @@
     (loop [i 0
            word (get words 0)
            filtered []
-           count 0]
+          countt 0]
       (if (= i length) {:filtered filtered
-                        :count count}
+                        :countt countt}
           (recur (inc i)
                  (get words (inc i))
                  (if (or (and has-function (fn-or-map word))
                          (and (not has-function) (not (get fn-or-map word))))
-                   (assoc filtered count word)
+                   (assoc filtered countt word)
                    filtered)
                  (if (or (and has-function (fn-or-map word))
                          (and (not has-function) (not (get fn-or-map word))))
-                   (inc count)
-                   count))))))
+                   (inc countt)
+                  countt))))))
 
 (defn build-dupes [{:keys [resolution threshold]}]
   (vec (repeat (- resolution (or threshold 0)) {})))
@@ -355,8 +354,8 @@
                (/ (if rtl (inc (inc x)) (- length (inc x))) length)
                (merge ret (for-full-t x length value -map dupes id partial-score context-score threshold resolution))))))
 
-(defn create-object-array [count]
-  (vec (concat [] (repeat count {}))))
+(defn create-object-array [countt]
+  (vec (concat [] (repeat countt {}))))
 
 
 (defn default-t [flex
@@ -464,39 +463,63 @@
                                  fff)))
     :else flex))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn limit-true [result pointer limit cursor]
+(defn limit-true
+  "pointer es nro"
+  [result pointer limit cursor]
   (let [length (count result)]
-    (if (and pointer (< length pointer))
+    (if (and (pos? pointer) (< length pointer))
       (let [pointer 0
             start (or pointer 0)
             page (+ start limit)]
         (if (< page length)
-          (let [result (vec (drop (dec start) (take page result)))]
-            (create-page cursor page result))
-          (create-page cursor page result)))
+          (create-page cursor page (vec (drop start (take page result))))
+          (create-page cursor 0 (if start (vec (drop start result)) result))))
       (let [start (or pointer 0)
             page (+ start limit)]
         (if (< page length)
-          (let [result (vec (drop (dec start) (take page result)))]
-            (create-page cursor page result))
-          (let [page 0]
-            (when start
-              (let [result (vec (drop (dec start) result))]
-                (create-page cursor page result)))))))))
+          (create-page cursor page (vec (drop start (take page result))))
+          (create-page cursor 0 (if start (vec (drop start result)) result)))))))
 
-(defn length-z-true [bool arrays pointer limit cursor page]
-  (when (not bool)
+(defn length-z-true [result bool arrays pointer]
+  (if (not bool)
     (let [result (first arrays)]
-      (when pointer
-        (let [pointer (.parseInt (first pointer))]
-          (if limit
-            (limit-true result pointer limit cursor)
-            (create-page cursor page result)))))))
+      (if pointer
+        {:pointer (Character/digit (first pointer) 10) :result result}
+        {:pointer pointer :result result}))
+    {:pointer pointer :result result}))
 
-(defn for-chico [z length arr has-and check has-not check-not is-final-loop
-                 pointer-count result count limit cursor pointer found]
+(defn for-first-result-true [i first-result result-length result check-not countt]
+  (loop [i i
+         id (get first-result i)
+         countt countt
+         result result]
+    (if (= i result-length) {:countt countt
+                             :result result}
+        (recur (inc i)
+               (get first-result (inc i))
+               (if (not (get check-not (str "@" id)))
+                 (inc countt)
+                 countt)
+               (if (not (get check-not (str "@" id)))
+                 (assoc result countt id)
+                 result)))))
+
+(defn first-result-true
+  "pointer es un string numerico o un numero"
+  [first-result has-not pointer result check-not countt]
+  (let [result-length (count first-result)]
+    (if has-not
+      (if pointer
+        (for-first-result-true (if (number? pointer) pointer (Integer/parseInt pointer)) first-result result-length result check-not countt)
+        (for-first-result-true 0 first-result result-length result check-not countt))
+      {:result first-result})))
+
+(defn for-chico
+  "los pointer andan los 5 al parecer"
+  [z length arr has-and check has-not check-not is-final-loop
+   pointer-count result countt limit cursor pointer found]
   (let [bool-or nil]
     (loop [i 0
            tmp (get arr i)
@@ -504,13 +527,11 @@
            check-val (if has-and (or (get check index) 0) z)
            check check
            found found
-           count count
+           countt countt
            pointer-count pointer-count
            result result]
-      (cond (= i length) {:check check
-                          :found found
-                          :count count
-                          :pointer-count pointer-count
+      (cond (= i length) {:found found
+                          :countt countt
                           :result result}
             (and (< 0 i)
                  check-val
@@ -518,8 +539,11 @@
                  (not (and (not has-and) (get check index)))
                  (= z check-val)
                  (or is-final-loop bool-or)
-                 (or (not pointer-count) (< (dec pointer-count) count))
-                 (and limit (= limit count))) {:return (create-page cursor (+ count (or pointer 0)) result)}
+                 (or (not (pos? pointer-count)) (< (dec pointer-count) countt))
+                 (and limit (= limit countt))) {:found found
+                                                :countt countt
+                                                :result result
+                                                :return (create-page cursor (+ countt (or pointer 0)) result)}
             :else (recur (inc i) ;;i
                          (get arr (inc i)) ;;tmp
                          (str "@" (get arr (inc i))) ;;index
@@ -529,12 +553,15 @@
                                   (not (and (not has-and) (get check index)))
                                   (= z check-val)
                                   (not (or is-final-loop bool-or)))
-                           (assoc check index (+ z 1))
+                           (assoc check index (inc z))
                            check)
-                         (if (and check-val ;;found
-                                  (not (and has-not (get check-not index)))
-                                  (not (and (not has-and) (get check index)))
-                                  (= z check-val))
+                         (if (and (pos? check-val) ;;found
+                                  (not (or (and has-not (get check-not index))
+                                           (and (not has-and) (get check index))
+                                           (and (= check-val z)
+                                                (or is-final-loop bool-or)
+                                                (or (not pointer-count) (< (dec pointer-count) count))
+                                                (and limit (= count limit))))))
                            true
                            found)
                          (if (and check-val ;;count
@@ -542,9 +569,9 @@
                                   (not (and (not has-and) (get check index)))
                                   (= z check-val)
                                   (or is-final-loop bool-or)
-                                  (or (not pointer-count) (< (dec pointer-count) count)))
-                           (inc count)
-                           count)
+                                  (or (not pointer-count) (< (dec pointer-count) countt)))
+                           (inc countt)
+                           countt)
                          (if (and check-val ;;pointer-count
                                   (not (and has-not (get check-not index)))
                                   (not (and (not has-and) (get check index)))
@@ -557,20 +584,20 @@
                                   (not (and (not has-and) (get check index)))
                                   (= z check-val)
                                   (or is-final-loop bool-or)
-                                  (or (not pointer-count) (< (dec pointer-count) count)))
-                           (assoc result count tmp)
+                                  (or (not pointer-count) (< (dec pointer-count) countt)))
+                           (assoc result countt tmp)
                            result))))))
 
-(defn for-init-true [result-length first-result has-not check-not check has-and result count]
+(defn for-init-true [result-length first-result has-not check-not check has-and result countt]
   (loop [i 0
          id (get first-result i)
          index (str "@" id)
          check check
          result result
-         count count]
+         countt countt]
     (if (= i result-length) {:check check
                              :result result
-                             :count count}
+                             :countt countt}
         (recur (inc i) ;;i
                (get first-result (inc i)) ;;id
                (str "@" (get first-result (inc i))) ;;index
@@ -579,22 +606,23 @@
                  check)
                (if (and (or (not has-not) (not (get check-not index))) ;;result
                         (not has-and))
-                 (assoc result count id)
+                 (assoc result countt id)
                  result)
-               (if (and (or (not has-not) (not (get check-not index))) ;;count
+               (if (and (or (not has-not) (not (get check-not index))) ;;countt
                         (not has-and))
-                 (inc count)
-                 count)))))
+                 (inc countt)
+                 countt)))))
 
-(defn init-true [first-result has-not check-not check has-and result arr count]
+
+(defn init-true [first-result has-not check-not check has-and result arr countt]
   (if first-result
     (let [result-length (count first-result)]
       (merge {:first-result nil :init false}
-             (for-init-true result-length first-result has-not check-not check has-and result count)))
+             (for-init-true result-length first-result has-not check-not check has-and result countt)))
     {:first-result arr}))
 
 (defn for-grande [z last-index length-z arrays cursor page init first-result has-not check-not
-                  check result count pointer-count limit pointer]
+                  check result countt pointer-count limit pointer]
   (let [bool-and true
         has-and true
         found false]
@@ -606,33 +634,36 @@
            init init
            check check
            result result
-           count count
+           countt countt
            found found
+           i-t (init-true first-result has-not check-not check has-and result arr countt);;ver si conviene sacar estos 2 afuera del loop con un let
            for-c (for-chico z length arr has-and
-                            (if (and init first-result)
-                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                              check)
+                            (if (and init first-result) (i-t :check) check)
                             has-not check-not is-final-loop pointer-count
-                            (if (and init first-result)
-                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                              result)
-                            (if (and init first-result)
-                              ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                              count)
+                            (if (and init first-result) (i-t :result) result)
+                            (if (and init first-result) (i-t :countt) countt)
                             limit cursor pointer found)]
       (cond (or (= z length-z)
                 (and (< 0 z) (and bool-and (not found)))) {:first-result first-result
-                                                           :init init
-                                                           :check check
                                                            :result result
-                                                           :count count
-                                                           :found found}
-            (and (not length) bool-and) {:return (create-page cursor page arr)}
-            (for-c :return) {:return (for-c :return)}
+                                                           :countt countt};;FIN DEL CONTEO
+            (and (not length) bool-and) {:first-result first-result
+                                         :result result
+                                         :countt countt
+                                         :return (create-page cursor page arr)};;RETURN PROPIO
+            (for-c :return) {:first-result first-result
+                             :result result
+                             :countt countt
+                             :return (for-c :return)};;RETURN DEL FOR CHICO
+            (and (< 0 z)
+                 bool-and
+                 (not found)) {:first-result first-result
+                               :result result
+                               :countt countt};;BREAK
             :else (recur (inc z) ;;z
                          (= (inc z) (- (or last-index length-z) 1)) ;;is-final-loop
-                         (get arrays (inc z)) ;;arr
-                         (count (get arrays (inc z))) ;;length
+                         (arrays (inc z)) ;;arr
+                         (count (arrays (inc z))) ;;length
                          (if (not length) ;;first-result
                            first-result
                            (if init
@@ -649,170 +680,100 @@
                            check
                            (if (and init (not first-result))
                              check
-                             ((for-chico z length arr has-and
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                                           check)
-                                         has-not check-not is-final-loop pointer-count
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                                           result)
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                                           count)
-                                         limit cursor pointer found) :check)))
+                             (for-c :check)))
                          (if (not length) ;;result
                            result
                            (if (and init (not first-result))
                              result
-                             ((for-chico z length arr has-and
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                                           check)
-                                         has-not check-not is-final-loop pointer-count
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                                           result)
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                                           count)
-                                         limit cursor pointer found) :result)))
-                         (if (not length) ;;count
-                           count
+                             (for-c :result)))
+                         (if (not length) ;;countt
+                           countt
                            (if (and init (not first-result))
-                             count
-                             ((for-chico z length arr has-and
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                                           check)
-                                         has-not check-not is-final-loop pointer-count
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                                           result)
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                                           count)
-                                         limit cursor pointer found) :count)))
+                             countt
+                             (for-c :countt)))
                          (if (not length) ;;found
                            found
                            (if (and init (not first-result))
                              found
-                             ((for-chico z length arr has-and
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                                           check)
-                                         has-not check-not is-final-loop pointer-count
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                                           result)
-                                         (if (and init first-result)
-                                           ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                                           count)
-                                         limit cursor pointer found) :found)))
-                         (for-chico z length arr has-and
-                                    (if (and init first-result)
-                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :check)
-                                      check)
+                             (for-c :found)))
+                         (init-true first-result has-not check-not check has-and result arr countt) ;;i-t
+                         (for-chico (inc z) length arr has-and ;;for-c
+                                    (if (and init first-result) (i-t :check) check)
                                     has-not check-not is-final-loop pointer-count
-                                    (if (and init first-result)
-                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :result)
-                                      result)
-                                    (if (and init first-result)
-                                      ((for-init-true (count first-result) first-result has-not check-not check has-and result count) :count)
-                                      count)
+                                    (if (and init first-result) (i-t :result) result)
+                                    (if (and init first-result) (i-t :countt) countt)
                                     limit cursor pointer found))))))
 
-(defn for-first-result-true [i first-result result-length result check-not count]
-  (loop [i i
-         id (get first-result i)
-         count count
-         result result]
-    (if (= i result-length) {:count count
-                             :result result}
-        (recur (inc i)
-               (get first-result (inc i))
-               (if (not (get check-not (str "@" id)))
-                 (inc count)
-                 count)
-               (if (not (get check-not (str "@" id)))
-                 (assoc result count id)
-                 result)))))
-
-(defn first-result-true [first-result has-not pointer result check-not]
-  (let [result-length (count first-result)]
-    (if has-not
-      (if pointer
-        (for-first-result-true (.parseInt pointer) first-result result-length result check-not pointer)
-        (for-first-result-true 0 first-result result-length result check-not pointer))
-      {:result first-result})))
-
-(defn length-z>1 [pointer last-index length-z arrays cursor page has-not check-not result
-                  pointer-count limit]
-  (let [check {}
+(defn length-z>1 [pointer last-index length-z arrays cursor page has-not result limit]
+  (let [check-not {}
+        check {}
         z 0
         init true
-        count 0
+        countt 0
         first-result nil]
     (if pointer
       (if (= 2 (count pointer))
         (let [pointer false
+              pointer-count nil
               for-g (for-grande z last-index length-z arrays cursor page init first-result
-                                has-not check-not check result count pointer-count limit pointer)]
+                                has-not check-not check result countt pointer-count limit pointer)]
           (if (for-g :return)
             for-g
-            (if first-result
-              (merge for-g (first-result-true first-result has-not pointer result check-not) {:pointer pointer})
-              for-g)))
-        (let [pointer (.parseInt (first pointer))
+            (if (for-g :first-result)
+              (merge for-g (first-result-true (for-g :first-result) has-not pointer (for-g :result)  check-not (for-g :countt)) {:pointer pointer})
+              (merge for-g {:pointer pointer}))))
+        (let [pointer (if (= "" pointer)
+                        nil
+                        (Character/digit (first pointer) 10))
               pointer-count pointer
               for-g (for-grande z last-index length-z arrays cursor page init first-result
-                                has-not check-not check result count pointer-count limit pointer)]
+                                has-not check-not check result countt pointer-count limit pointer)]
           (if (for-g :return)
             for-g
-            (if first-result
-              (merge for-g (first-result-true first-result has-not pointer result check-not) {:pointer pointer})
-              for-g))))
-      (let [for-g (for-grande z last-index length-z arrays cursor page init first-result
-                              has-not check-not check result count pointer-count limit pointer)]
+            (if (for-g :first-result)
+              (merge for-g (first-result-true (for-g :first-result) has-not pointer (for-g :result) check-not (for-g :countt)) {:pointer pointer})
+              (merge for-g {:pointer pointer})))))
+      (let [pointer-count nil
+            for-g (for-grande z last-index length-z arrays cursor page init first-result
+                              has-not check-not check result countt pointer-count limit pointer)]
         (if (for-g :return)
           for-g
-          (if first-result
-            (merge for-g (first-result-true first-result has-not pointer result check-not))
-            for-g))))))
+          (if (for-g :first-result)
+            (merge for-g (first-result-true (for-g :first-result) has-not pointer (for-g :result) check-not (for-g :countt)))
+            (merge for-g {:pointer pointer})))))))
 
 (defn intersect [arrays limit cursor bool has-not]
-  (let [result []]
-    (if (= true cursor)
+  (let [result []
+        length-z (count arrays)]
+    (if (true? cursor)
       (let [cursor 0
-            pointer ""
-            length-z (count arrays)]
+            pointer ""]
         (if (< 1 length-z)
-          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not nil result nil limit)]
+          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not result limit)]
             (if (lz :return)
               (lz :return)
               (if length-z
-                (length-z-true bool arrays (lz :pointer) limit cursor nil)
+                (length-z-true result bool arrays (lz :pointer))
                 (if limit
                   (limit-true (lz :result) (lz :pointer) limit cursor)
                   (create-page cursor nil (lz :result))))))
           (if length-z
-            (length-z-true bool arrays pointer limit cursor nil)
+            (length-z-true result bool arrays pointer)
             (if limit
               (limit-true result pointer limit cursor)
               (create-page cursor nil result)))))
-      (let [pointer (and cursor (str/split cursor #":"))
-            length-z (count arrays)]
+      (let [pointer (and cursor (str/split cursor #":"))]
         (if (< 1 length-z)
-          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not nil result nil limit)]
+          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not result limit)]
             (if (lz :return)
               (lz :return)
               (if length-z
-                (length-z-true bool arrays (lz :pointer) limit cursor nil)
+                (length-z-true result bool arrays (lz :pointer))
                 (if limit
                   (limit-true (lz :result) (lz :pointer) limit cursor)
                   (create-page cursor nil (lz :result))))))
           (if length-z
-            (length-z-true bool arrays pointer limit cursor nil)
+            (length-z-true result bool arrays pointer)
             (if limit
               (limit-true result pointer limit cursor)
               (create-page cursor nil result))))))))
@@ -820,115 +781,105 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn for-search-inner [resolution threshold map-value map value]
+(defn for-search-inner [resolution threshold map value]
   (loop [z 0
+         map-value (and (get map z) (get-in map [z value]))
          map-check []
-         count 0
+         countt 0
          map-found false]
     (if (= z (- resolution threshold)) {:map-check map-check
-                                        :count count
+                                        :countt countt
                                         :map-found map-found}
-        (recur (inc z)
-               (if (= map-value (and (get map z) (get (get map z) value)))
-                 (assoc map-check count map-value)
+        (recur (inc z);;z
+               (and (get map (inc z)) (get-in map [(inc z) value]));;map-value
+               (if map-value;;map-check
+                 (assoc map-check countt map-value)
                  map-check)
-               (if (= map-value (and (get map z) (get (get map z) value)))
-                 (inc count)
-                 count)
-               (if (= map-value (and (get map z) (get (get map z) value)))
+               (if map-value;;countt
+                 (inc countt)
+                 countt)
+               (if map-value;;map-found
                  true
                  map-found)))))
 
-(defn for-search [{:keys [resolution threshold -map] :as flex}
+(defn for-search [{:keys [resolution threshold -map] :as flex} ;;para resolution hace una asignacion interna... significa que el resolution global no lo toca?
                   words use-contextual ctx-map length]
   (loop [a 0
          value (get words a)
-         ctx-root nil
+         ctx-root nil ;;ctx hace referencia a contextual
          check-words {}
          map-check []
          map-found false
          countt 0
          map (if use-contextual (get ctx-map ctx-root) -map)
          check []]
-    (cond (= a length) {:value value
-                        :ctx-root ctx-root
+    (cond (= a length) {:ctx-root ctx-root
                         :check-words check-words
-                        :map-check map-check
-                        :map-found map-found
-                        :count countt
-                        :map map
-                        :check check}
+                        :check check};;ver por las dudas si no falta found en estas 2 primeras condiciones de terminacion
           (and value
                use-contextual
                (not ctx-root)
-               (not (get ctx-map value))) {:value value
-                                           :return []}
+               (not (get ctx-map value))) {:ctx-root ctx-root
+                                           :check-words check-words
+                                           :check check
+                                           :return []};;este es return result
+          (and value
+               (not (get check-words value))
+               (not map-found)) {:found false
+                                 :ctx-root ctx-root
+                                 :check-words check-words
+                                 :check check
+                                 :return []};;BREAK
           :else (recur
-                 ;;a
-                 (inc a)
-                 ;;value
-                 (get words (inc a))
-                 ;;ctx-root
-                 (if (and value
+                 (inc a);;a
+                 (get words (inc a));;value
+                 (if (and value;;ctx-root
                           use-contextual
                           (not ctx-root)
                           (get ctx-map value))
                    value
                    (if (and value
-                            use-contextual
-                            (not ctx-root))
-                     ctx-root
-                     (if (and value
-                              (not (get check-words value))
-                              map-found)
-                       value
-                       ctx-root)))
-                 ;;check-words
-                 (if (and value
+                            (not (get check-words value))
+                            map-found)
+                     value
+                     ctx-root));;ojo con el continue que aparece abajo en (!ctx-root) que no lo estoy considerando me parece. me parece que no importa porque yo estoy marcando solo el caso en el que ctx-root asume value, y en el resto de los casos mantiene el valor previo
+                 (if (and value;;check-words
                           use-contextual
                           (not ctx-root)
                           (get ctx-map value))
                    (assoc check-words value 1)
                    (if (and value
-                            use-contextual
-                            (not ctx-root))
-                     check-words
-                     (if (and value
-                              (not (get check-words value)))
-                       (assoc check-words value 1)
-                       check-words)))
-                 ;;map-check
-                 (if (and value
+                            (not (get check-words value)))
+                     (assoc check-words value 1)
+                     check-words))
+                 (if (and value;;map-check. ver si no se modifica tambien en if(map-found) de js
                           (not (get check-words value))
                           map)
-                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                   (let [for-in (for-search-inner resolution threshold map value)]
                      (for-in :map-check))
-                   map-check)
-                 ;;map-found
-                 (if (and value
+                   map-check);;ver si el siguiente if, map-found, modifica a map-check cuando aplica sobre el concat.apply
+                 (if (and value;;map-found
                           (not (get check-words value))
                           map)
-                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                   (let [for-in (for-search-inner resolution threshold map value)]
                      (for-in :map-found))
                    map-found)
-                 ;;countt
-                 (if (and value
-                          (not (get check-words value)))
-                   (let [for-in (for-search-inner resolution threshold nil map value)]
+                 (if (and value;;countt
+                          (not (get check-words value))
+                          map)
+                   (let [for-in (for-search-inner resolution threshold map value)]
                      (for-in :countt))
                    countt)
-                 ;;map
-                 (if (and value
+                 (if (and value;;map
                           (not (get check-words value)))
-                   (if use-contextual (get ctx-map ctx-root) (get this -map))
+                   (if use-contextual (get ctx-map ctx-root) -map)
                    map)
-                 ;;check
-                 (if (and value
+                 (if (and value;;check
                           (not (get check-words value))
                           map-found)
-                   (assoc check (countt check) (if (< 1 countt)
-                                                 (concat map-check (concat [] map-check));;corroborar si esta bien
-                                                 (get map-check 0)))
+                   (assoc check (count check) (if (< 1 countt)
+                                                (concat map-check (concat [] map-check));;corroborar si esta bien y ver si en el js al aplicar cncat.apply sobre el objeto para obtener el resultado tambien estoy modificando ese objeto en cuestion
+                                                (get map-check 0)))
                    check)))))
 
 (defn search [{:keys [threshold tokenize split filter depth -ctx] :as flex}
@@ -938,45 +889,53 @@
                    callback)
         limit (if (and limit (fn? limit))
                 1000
-                (or limit (= limit 0) (= limit 1000)))
+                (if (pos? limit)
+                  limit
+                  (or (= limit 0) 1000)))
         result []
         -query query
-        threshold (or threshold 0)
-        flex (merge flex {:limit limit
+        threshold (if (pos? threshold)
+                    threshold
+                    0)
+        flex (merge flex {:callback callback
+                          :limit limit
                           :threshold threshold})];;corroborar si esto y limit estan bien
-    (if (and (not -recall)
-             callback)
-      (callback (search flex -query limit nil true));;callback deberia devolver flex....verificarlo
+    (if (and (not -recall) callback)
+      (callback (search flex -query limit nil true));;callback deberia devolver flex....verificarlo. no le agregue los demas objetos modificados porque esta haciendo una recursion y teoricamente tendria que estar terminando por alguna de las otras salidas en las cuales si estarian incluidos. estoy suponiendo que estoy devolviendo this aca
       (if (or (not query) (not (string? query)))
         (merge flex {:result result})
-        (let [-query query;;esto me parece que hay que sacarlo... no tiene ningun sentido
-              -query (encode flex -query);;ver si el -query va en value o en flex
-              tokenizer tokenize
-              words (if (fn? tokenizer)
-                      (tokenizer -query)
-                      (str/split -query split))
-              words (if filter
-                      (filter-words words filter)
-                      words)
-              length (count words)
-              found true
-              use-contextual (if (and (< 1 length) (and depth (= tokenize "strict")))
-                               true
-                               nil)
-              words (if (and (< 1 length) (not (and depth (= tokenize "strict"))))
-                      (reverse (sort words))
-                      words)
-              ctx-map nil]
+        (let [-query (encode flex -query)
+              flex (merge flex {:-query -query})];;ver si el -query va en value o en flex
           (if (not (count -query))
             (merge flex {:result result})
-            (if (or (not use-contextual) (= ctx-map -ctx))
-              (let [fs (for-search flex words use-contextual ctx-map length)]
-                (if (fs :result)
-                  (merge flex fs)
-                  (if found
-                    (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
-                    (merge flex {:result result}))))
-              (merge flex {:result result}))))))))
+            (let [words (if (fn? tokenize)
+                          (tokenize -query)
+                          (str/split -query split))
+                  words (if filter
+                          (filter-words words filter)
+                          words)
+                  length (count words)
+                  found true
+                  use-contextual (if (and (< 1 length) (and depth (= tokenize "strict")))
+                                   true
+                                   nil)
+                  words (if (and (< 1 length) (not (and depth (= tokenize "strict"))))
+                          (reverse (sort words))
+                          words)
+                  ctx-map nil
+                  flex (merge flex {:words words
+                                    :length length
+                                    :found found
+                                    :use-contextual use-contextual
+                                    :ctx-map ctx-map})]
+              (if (or (not use-contextual) (= ctx-map -ctx))
+                (let [fs (for-search flex words use-contextual ctx-map length)];;aca por ejemplo en js reasigna const resolution = this.resolution. esto significa que el objeto global resolution no se cambia y solo estoy modificandolo internamente en la funcion?. notese de todas maneras que dentro del for no estoy reasignando nada a resolution, ya sea la posible interna o la global
+                  (if (fs :result)
+                    (merge flex fs)
+                    (if found
+                      (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
+                      (merge flex {:result result}))));;ver porque intersect no tiene has-and y porque js usa SUPPORT_SUGGESTION && suggest como argumentos
+                (merge flex {:result result})))))))))
 
 #_(INTERSECT
    (LENGTH-Z > 1
