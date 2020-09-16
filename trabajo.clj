@@ -1,20 +1,27 @@
-(ns flexsearch.core
+(ns flexsearch.trabajo
   (:require [clojure.string :as str]))
 
-(def whitespaces #"\W+")
+;;AGREGAR LOS WHEN CUANDO HAGAN FALTA Y SUS TESTS
 
+(def support-encoder true)
+(def support-info true)
+(def support-preset true)
+
+;;TODAS ESTAS SON OPCIONES DE CONFIGURACION.
+;;LOS DEFAULTS SON LOS QUE VIENEN POR DEFECTOS
+;;LOS PRESETS SON "PERFILES" DETERMINADOS DE CONFIGURACION
 (def defaults
   {:encode "icase"
    :tokenize "forward"
    :cache false
    :async false
    :worker false
-   :rtl false
+   :rtl false ;;Right-to-left
    :doc false
    :resolution 9
    :threshold 0
    :depth 0
-   :split whitespaces})
+   :split #"\W+"})
 
 (def presets
   {:memory {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
@@ -27,7 +34,7 @@
 (defn sort-by-length-down [a b] (cond
                                   (> (count a) (count b)) -1
                                   (< (count a) (count b)) 1
-                                  :else 0))
+                                  :else 0));;corregida, funcionaba mal
 
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
@@ -160,13 +167,14 @@
    :extra global-encoder-extra
    :balance global-encoder-balance})
 
-(defn create-page [cursor page result]
-  ;; TODO str page?
-  (if cursor
-    {:page cursor, :next (if page (str page) nil), :result result}
-    result))
 
-(defn encode [{:keys [encoder stemmer -matcher] :as object} value]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INIT-ADD;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(defn encode [{:keys [encoder stemmer -matcher] :as object}
+              value]
   (let [global-matcher []]
     (when value
       (cond
@@ -191,8 +199,9 @@
         (count global-matcher) (replace-regexes value
                                                 global-matcher)
         :else "error"))))
+#_(encode {:encoder global-encoder-balance :stemmer {"ational" "ate"} :-matcher simple-regex} "dfsdd    dfational")
 
-(defn filter-words [words fn-or-map]
+(defn filter-words [words fn-or-map];;vector con palabras y set con palabras a descartar
   (let [length (count words)
         has-function (fn? fn-or-map)]
     (loop [i 0
@@ -212,9 +221,12 @@
                    (inc countt)
                   countt))))))
 
-(defn build-dupes [{:keys [resolution threshold]}]
+(defn build-dupes [{:keys [resolution threshold]}];;complexity
   (vec (repeat (- resolution (or threshold 0)) {})))
+#_(build-dupes {:resolution 9 :threshold nil})
 
+;;INICIALIZA O RESETEA UN INDEX CON LAS CORRESPONDIENTES OPCIONES/CONFIGURACIONES
+;;TOCA: threshold, resolution, todo defaults, presets, encoder, filterer, fmap, ctx, id, timer
 (defn init [options]
   (let [{:keys [threshold] :as options} (-> defaults
                                             (merge options)
@@ -224,18 +236,19 @@
                         #(if (<= % threshold) (inc threshold) %))
         {:keys [encoder] :as options} (update options
                                               :encoder
-                                              #(or (global-encoder %) %))
+                                              #(or (global-encoder %) %));;este or me devuelve una funcion!!!
         options (update options
                         :filterer
-                        #(when % (set (mapv encoder %))))]
+                        #(when % (set (mapv encoder %))))];;que coleccion va en :filterer???
     (into
      options
-     {:fmap (build-dupes options)
+     {:fmap (build-dupes options);;es flexmap ?
       :ctx {}
       :id {}
       :timer 0})))
+#_(init {:resolution 9 :threshold 9 :preset :memory :encoder :advanced})
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn add-index [map dupes value id partial-score context-score threshold resolution]
   (or (dupes value)
@@ -249,48 +262,52 @@
             arr (assoc arr (count arr) id)]
         {:score score
          :dupes dupes
-         :arr (if (<= threshold score) arr nil)})))
+         :arr (if (<= threshold score) arr nil)})));;sacar score que es interna.... arr donde se usa?
 
+;;me parece que tengo que hacer 2 loops porque estoy alternando entre 2 recorridos distintos.... uno cuando entro a un vector y otro cuando entro a un mapa
 (defn remove-index [map id]
   (loop [coll (vec map)
          ret []
          c 0]
     (let [key (first (first coll))
-          value (second (first coll))]
+          value (second (first coll))];;tmp(temporary?, token map?)
       (if (= c (count map)) (if (empty? ret) nil
                                 (apply assoc {} (apply concat ret)))
-          (recur
-           (vec (rest coll))
-           (if (and (= 1 (count value)) (= id (first value))) ret
-               (loop [vals value
-                      rett []
-                      cc 0]
-                 (cond (= cc (count value)) (conj ret [key rett])
-                       (= id (first vals)) (conj ret [key (into rett (rest vals))])
-                       :else (recur
-                              (rest vals)
-                              (cond (map? (first vals)) (conj rett (remove-index (first vals) id))
-                                    (= id (first vals)) rett
-                                    (not= id (first vals)) (conj rett (first vals)))
-                              (inc cc)))))
-           (inc c))))))
+          (recur (vec (rest coll))
+                 (if (and (= 1 (count value)) (= id (first value))) ret
+                     (loop [vals value
+                            rett []
+                            cc 0]
+                       (cond (= cc (count value)) (conj ret [key rett])
+                             (= id (first vals)) (conj ret [key (into rett (rest vals))])
+                             :else (recur (rest vals)
+                                          (cond (map? (first vals)) (conj rett (remove-index (first vals) id))
+                                                (= id (first vals)) rett
+                                                (not= id (first vals)) (conj rett (first vals)))
+                                          (inc cc)))))
+                 (inc c))))))
+#_(remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2);;la de js no veo que haga nada.... deja todo como está
+#_(apply assoc {} (apply concat [[:a [1 2 3]]]));;mete adentro del vector tanto assoc como {}. recordar que transforma la coleccion en lista para que pueda ser ejecutada con la funcion al principio 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;REMUEVE ITEM DE UN INDEX
 (defn for-remove-flex [resolution threshold -map id]
   (loop [z 0
-         -map -map
+         -map -map;;-map es un vector de mapas
          ret []]
     (if (= z (- resolution (or threshold 0))) ret
         (recur (inc z)
                (rest -map)
                (conj ret (remove-index (first -map) id))))))
 
-(defn remove-flex [{:keys [-ids depth -map resolution threshold -ctx] :as flex}
-                   id callback -recall]
+(defn remove-flex [{:keys [-ids depth -map resolution threshold -ctx] :as flex};;-ids es un objeto
+                   id callback -recall];;recall es un booleano
   (let [index (str "@" id)]
-    (if (-ids index)
+    (if (-ids index);;el valor de ids es a su vez un mapa con llaves string
       (if (and (not -recall)
                callback)
-        (callback (remove-flex flex id nil true))
+        (callback (remove-flex flex id nil true));;??? como hago con callback que se llama sin ningun argumento?. creo mque asi esta bien ya que la estaria llamando sobre el flex.. pero porque no figura como this en el js????
         (assoc (if depth
                  (assoc flex
                         :-ctx (remove-index -ctx id)
@@ -298,19 +315,20 @@
                  (assoc flex
                         :-map (for-remove-flex resolution threshold -map id)))
                :-ids (dissoc -ids index)))
-      flex)))
+      flex)));;ver si hace falta devolver algun otro objeto modificado junto a flex
 
+;;MODIFICA ITEM DE UN INDEX
 (declare add)
 (defn update-flex [{:keys [-ids] :as flex}
-                   id content callback -recall]
+                   id content callback -recall];;callback es de support-callback?
   (let [index (str "@" id)]
     (if (and (-ids index) (string? content))
-      (add (remove-flex flex id callback -recall) id content callback true nil)
+      (add (remove-flex flex id callback -recall) id content callback nil true);;ver bien si el true de js corresponde a -skip-update o a -recall
       flex)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn reverse-t [length value -map dupes id rtl context-score threshold resolution]
+(defn reverse-t [length value -map dupes id rtl context-score threshold resolution];;ojo que este -map en realidad figura como map solo. posiblemente creada como variable interna que obtiene el valor de this.-map. ojo tambien que el input rtl es raro, tiene un if adentro ademas del que se ve aca
   (loop [a length
          b (dec a)
          token (str (get value a) "")
@@ -328,7 +346,6 @@
          token (str (get value a));;token es un string
          dupes dupes
          ret {}]
-    (prn a token dupes ret)
     (if (= a length) (merge ret {:token token})
         (recur (inc a)
                (str token (get value (inc a)))
@@ -362,19 +379,19 @@
 (defn create-object-array [countt]
   (vec (concat [] (repeat countt {}))))
 
-
 (defn default-t [flex
                  -map dupes value id context-score threshold resolution depth word-length i words]
   (let [result (add-index -map dupes value id 1 context-score threshold (dec resolution))
-        score (or (result :score) result)
-        dupes (result :dupes)]
+        score (or (result :score) result);;ver si en verdad necesito solo :score o es todo el mapa
+        dupes (result :dupes)
+        arr (result :arr)]
     (if (and depth (< 1 word-length) (<= threshold score))
       (let [ctxdupes (or (get-in dupes [:-ctx value])
                          (assoc-in dupes [:-ctx value] {}))
             ctxtmp (or (get-in flex [:-ctx value])
                        (assoc-in flex [:-ctx value] (vec (concat [] (repeat (- resolution (or threshold 0)) {})))))
             x (if (< (- i depth) 0) 0 (- i depth))
-            y (if (< word-length (+ i depth 1)) word-length (+ i depth 1))
+            y (if (< word-length (+ i depth 1)) word-length (+ i depth 1));;ctxdupes, ctxtmp x e y me parece que no se usan mas adelante por eso no las devolvi en ningun lado
             a-i (loop [x x
                        dupes dupes
                        ret {}]
@@ -388,6 +405,7 @@
                                ret))))]
         (merge flex result a-i))
       (merge flex result))))
+;;falta el not x=i en el for
 
 (defn for-add [flex
                words rtl word-length tokenizer dupes -map id threshold resolution depth]
@@ -400,14 +418,12 @@
                           word-length)
          token nil
          ret {}]
-    (cond (and value
-               (= i word-length)) (merge flex
-                                         {:value value
-                                          :length length
-                                          :context-score context-score
-                                          :token token}
-                                         ret)
-          (= i word-length) (merge flex {:value value})
+    (cond (= i word-length) (merge flex
+                                   {:value value
+                                    :length length
+                                    :context-score context-score
+                                    :token token};;como se si todos estos valores van en el flex o no?
+                                   ret)
           :else (recur (inc i);;i
                        (get words (inc i));;value
                        (if value;;length
@@ -445,12 +461,12 @@
          (string? content)
          (or id (= id 0))
          (not -recall)
-         callback) (callback (add flex id content nil -skip-update true))
+         callback) (callback (add flex id content nil -skip-update true));;ver como aplico callback, aridad y como son las funciones que ingreso a traves de el
     (and content
          (string? content)
-         (or id (= id 0))) (let [content (encode flex content)]
+         (or id (= id 0))) (let [content (encode flex content)];;ver porque (content) esta entre parentesis en el js
                              (if (not (count content))
-                               (assoc flex :content content)
+                               (assoc flex :content content);;ver si tengo que meterlo adentro o armo un vector o un mapa con flex mas content
                                (let [tokenizer tokenize
                                      words (if (fn? tokenizer)
                                              (tokenizer content)
@@ -467,8 +483,25 @@
                                                      :word-length word-length})]
                                  fff)))
     :else flex))
+;;estaria(verificar si esta bien la cadena) devolviendo solo el flex.... que pasa con todos los otros const o let que hay dando vueltas? se usan mas adelante por alguna otra o solo es para el uso interno y no tiene sentido devolverlas?
+;;modificamos
+;;tokenizer
+;;words
+;;dupes (no lo mergeo al final porque ya lo obtengo de las llamadas a add-index)
+;;word-length
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn create-page [cursor page result]
+  ;; TODO str page?
+  (if cursor
+    {:page cursor
+     :next (if page (str page) nil)
+     :result result}
+    result))
 
 (defn limit-true
   "pointer es nro"
@@ -487,13 +520,17 @@
           (create-page cursor page (vec (drop start (take page result))))
           (create-page cursor 0 (if start (vec (drop start result)) result)))))))
 
-(defn length-z-true [result bool arrays pointer]
+(defn length-z-true
+  "pointer es un string numerico. ver como puedo hacer para que admita numeros sueltos tb"
+  [result bool arrays pointer]
   (if (not bool)
     (let [result (first arrays)]
       (if pointer
         {:pointer (Character/digit (first pointer) 10) :result result}
         {:pointer pointer :result result}))
     {:pointer pointer :result result}))
+;;antes usaba (.parseInt (first pointer))
+;;probar sino con (Integer/parseInt "2")
 
 (defn for-first-result-true [i first-result result-length result check-not countt]
   (loop [i i
@@ -504,15 +541,17 @@
                              :result result}
         (recur (inc i)
                (get first-result (inc i))
-               (if (not (get check-not (str "@" id)))
+               (if (not (get check-not (str "@" id)));;el id no hay que expresarlo como (inc i) porque esta como condicion, no lo que devuelvo
                  (inc countt)
                  countt)
                (if (not (get check-not (str "@" id)))
                  (assoc result countt id)
                  result)))))
+#_(for-first-result-true 0 ["a"] 3 ["x" "y" "z"] {} 2);da bien 
 
+;;como la i termina de usarse aca no tiene sentido devolverla en algun lado como valor
 (defn first-result-true
-  "pointer es un string numerico o un numero"
+  "pointer es un string numerico o un numero. ver si realmente hace falta que sea numero o con string ya alcanza"
   [first-result has-not pointer result check-not countt]
   (let [result-length (count first-result)]
     (if has-not
@@ -521,6 +560,10 @@
         (for-first-result-true 0 first-result result-length result check-not countt))
       {:result first-result})))
 
+;;cuando tengo como aca un return y dos mutaciones a objetos (check y found)
+;;(en este caso el return es una funcion(que luego devuelve un objeto), pero puede ser directamente el objeto en si mismo)
+;;me parece que tengo que devolvr un mapa como objeto en donde incluyo todos los valores finales de lo que fue modificando la funcion js
+;;en este caso seria algo asi {:page (create-page args) :check value :found value}
 (defn for-chico
   "los pointer andan los 5 al parecer"
   [z length arr has-and check has-not check-not is-final-loop
@@ -581,7 +624,7 @@
                                   (not (and has-not (get check-not index)))
                                   (not (and (not has-and) (get check index)))
                                   (= z check-val)
-                                  (or is-final-loop bool-or))
+                                  (or is-final-loop bool-or));;PREGUNTAR A GAL SI LA CONDICION TERMINA ACA O TENGO QUE INCLUIR EL SIGUIENTE OR EN EL QUE YA ESTA POINTER-COUNT
                            (dec pointer-count)
                            pointer-count)
                          (if (and check-val ;;result
@@ -592,6 +635,8 @@
                                   (or (not pointer-count) (< (dec pointer-count) countt)))
                            (assoc result countt tmp)
                            result))))))
+;;;;VER SI PUEDO HACER QUE LAS MODIFICACIONES DE LA PRIMER VUELTA LAS PUEDO HACER DENTRO DEL [] DEL LOOP
+;;PARA ASI EVITAR QUE LA CONDICION DE TERMINACION SE DE CUANDO (< 0 i). ANALIZARLO!
 
 (defn for-init-true [result-length first-result has-not check-not check has-and result countt]
   (loop [i 0
@@ -618,13 +663,15 @@
                  (inc countt)
                  countt)))))
 
-
 (defn init-true [first-result has-not check-not check has-and result arr countt]
   (if first-result
     (let [result-length (count first-result)]
       (merge {:first-result nil :init false}
              (for-init-true result-length first-result has-not check-not check has-and result countt)))
     {:first-result arr}))
+;;ojo con la variable countt que coincide el nombre con la funcion
+;;no la termine usando porque quedaba mas corto si llamaba directamente a for-init-true me parece
+0 2 1 ["a" "asdd" "rrr" "z"] false 2 true nil false {} {} ["a" "b" "c" "sdfsdfs"] 0 3 8 "3"
 
 (defn for-grande [z last-index length-z arrays cursor page init first-result has-not check-not
                   check result countt pointer-count limit pointer]
@@ -641,7 +688,7 @@
            result result
            countt countt
            found found
-           i-t (init-true first-result has-not check-not check has-and result arr countt)
+           i-t (init-true first-result has-not check-not check has-and result arr countt);;ver si conviene sacar estos 2 afuera del loop con un let
            for-c (for-chico z length arr has-and
                             (if (and init first-result) (i-t :check) check)
                             has-not check-not is-final-loop pointer-count
@@ -709,6 +756,13 @@
                                     (if (and init first-result) (i-t :countt) countt)
                                     limit cursor pointer found))))))
 
+
+;;CUANDO TENGO PEDACITOS Y EN UNO HAY UN RETURN TENGO QUE FINALIZAR TODA LA FUNCION (TANTO EL CLOJURE COMO EN JS) Y DEVOLVER ESE VALOR
+;;PERO EN LA FUNCION DE CLOJURE TAMBIEN TENGO QUE ALMACENAR/DEVOLVER TODOS LOS OTROS OBJETOS QUE SE MODIFICARON? CREO QUE SI
+;;LO QUE SI ES SEGURO ES QUE HAY QUE TENER CUIDADO DE LOS RETURNS EN LOS FRAGMENTOS DE FUNCIONES PORQUE NO SOLO TERMINAN ESA SINO TODAS LAS QUE TIENE ARRIBA QUE SEAN DE SU MISMA FUNCION
+;;ENTONCES TENGO QUE MODIFICAR TODO PORQUE NO SE SI VOY A NECESITAR O NO LOS VALORES DE LOS OBJETOS MODIFICADOS APARTE DE LOS VALORES DE LOS RETURN
+;;ESTE PROBLEMA ME PARECE PUEDO SOLUCIONARLO SIMPLEMENTE DEVOLVIENDO, EN EL CASO QUE SE ACTIVE UN RETURN, UN MAPA QUE CONTENGA TANTO A LOS OBJETOS MODIFICADOS COMO AL RETURN MISMO
+
 (defn length-z>1 [pointer last-index length-z arrays cursor page has-not result limit]
   (let [check-not {}
         check {}
@@ -728,7 +782,7 @@
               (merge for-g (first-result-true (for-g :first-result) has-not pointer (for-g :result)  check-not (for-g :countt)) {:pointer pointer})
               (merge for-g {:pointer pointer}))))
         (let [pointer (if (= "" pointer)
-                        nil
+                        nil;;ver si esto esta bien o que consecuencias trae
                         (Character/digit (first pointer) 10))
               pointer-count pointer
               for-g (for-grande z last-index length-z arrays cursor page init first-result
@@ -746,7 +800,18 @@
           (if (for-g :first-result)
             (merge for-g (first-result-true (for-g :first-result) has-not pointer (for-g :result) check-not (for-g :countt)))
             (merge for-g {:pointer pointer})))))))
+;;hay que sacarle de la devolucion :first-result y :count que son internas
+#_(length-z>1 3 nil 1 [1 "asdd" "rrr"] true 2 true ["a" "b" "c"] 2);falla por pointer=3 en 794
+#_(length-z>1 "3" nil 1 [1 "asdd" "rrr"] true 2 true ["a" "b" "c"] 2);falla por 1 en arrays que despues for-grande no lo puede contar
+#_(length-z>1 true 2 1 ["a" "asdd" "rrr"] true 2 true ["a" "b" "c"] 8);;falla por pointer=true que no se puede contar en 794
+#_(length-z>1 false nil 1 [["a" "fxf"] ["asdd"] ["rrr"]] true nil true ["a" "b" "c"] 8);;falla por dec pointer-count en 651
+#_(length-z>1 false nil 1 ["a" "asdd" "rrr"] true 2 true ["a" "b" "c"] 8);;falla por pointer-count=nil no se puede restar en 651
 
+#_(length-z>1 false nil 1 [["a" "fxf"] ["asdd"] ["rrr"]] true nil true ["a" "b" "c"] 8);;devuelve con pointer-count=0 pero js => a,fxf,a,fxf,c,2,false
+#_(length-z>1 false nil 1 ["a" "asdd" "rrr"] true 2 true ["a" "b" "c"] 8);;devuelve con pointer-count=0 pero js =>a,a,b,c,1,false
+
+;;VER LA POSIBILDAD DE EMPEZAR LLAMANDO DESDE LA ULTIMA FUNCION Y PONER LOS CONDICIONALES ADENTRO SUYO, EN LOS ARGUMENTOS DIGAMOS
+;;sin suggest
 (defn intersect [arrays limit cursor bool has-not]
   (let [result []
         length-z (count arrays)]
@@ -782,8 +847,14 @@
             (if limit
               (limit-true result pointer limit cursor)
               (create-page cursor nil result))))))))
+;;VER DE PLANTEARLO CON LO ULTIMO DE JS COMO PRIMER FUNCION APLICADA E IR PONIENDO LOS CONDICIONALES ADENTRO A MEDIDA QUE VOY SUBIENDO EN JS
 
+#_(intersect ["a" "asdd" "rrr"] 8 true ["not"] true);;funciona pero no se que da el js
+;;el js falla porque check-not[index] en la parte init no tiene nada y no puedo obtener la propiedad. dicha propiedad debiera haber sido agregada por SUPPORT-DOCUMENT anteriormente
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn for-search-inner [resolution threshold map value]
@@ -807,11 +878,12 @@
                  true
                  map-found)))))
 
-(defn for-search [{:keys [resolution threshold -map] :as flex} 
+;;ver si las variables que asigne en el loop se originan dentro del for, fuera del for pero dentro de la funcion o sino totalmente fuera de la funcion
+(defn for-search [{:keys [resolution threshold -map] :as flex} ;;para resolution hace una asignacion interna... significa que el resolution global no lo toca?
                   words use-contextual ctx-map length]
   (loop [a 0
          value (get words a)
-         ctx-root nil 
+         ctx-root nil ;;ctx hace referencia a contextual
          check-words {}
          map-check []
          map-found false
@@ -820,7 +892,7 @@
          check []]
     (cond (= a length) {:ctx-root ctx-root
                         :check-words check-words
-                        :check check}
+                        :check check};;ver por las dudas si no falta found en estas 2 primeras condiciones de terminacion
           (and value
                use-contextual
                (not ctx-root)
@@ -847,7 +919,7 @@
                             (not (get check-words value))
                             map-found)
                      value
-                     ctx-root))
+                     ctx-root));;ojo con el continue que aparece abajo en (!ctx-root) que no lo estoy considerando me parece. me parece que no importa porque yo estoy marcando solo el caso en el que ctx-root asume value, y en el resto de los casos mantiene el valor previo. de todas maneras me parece que no va porque estoy evaluando la misma condicion que en el de arriba. y como esta debajo del cambio que se le realiza si no tenia un valor previo esa condicion nunca se activara. si no tenia valor lo asume y la 2da comprobacion da falso quedando value, y si tenia valor queda con el valor que venia y el continue tampoco se activa
                  (if (and value;;check-words
                           use-contextual
                           (not ctx-root)
@@ -857,12 +929,12 @@
                             (not (get check-words value)))
                      (assoc check-words value 1)
                      check-words))
-                 (if (and value
+                 (if (and value;;map-check. ver si no se modifica tambien en if(map-found) de js
                           (not (get check-words value))
                           map)
                    (let [for-in (for-search-inner resolution threshold map value)]
                      (for-in :map-check))
-                   map-check)
+                   map-check);;ver si el siguiente if, map-found, modifica a map-check cuando aplica sobre el concat.apply
                  (if (and value;;map-found
                           (not (get check-words value))
                           map)
@@ -883,10 +955,11 @@
                           (not (get check-words value))
                           map-found)
                    (assoc check (count check) (if (< 1 countt)
-                                                (concat map-check (concat [] map-check))
+                                                (concat map-check (concat [] map-check));;corroborar si esta bien y ver si en el js al aplicar cncat.apply sobre el objeto para obtener el resultado tambien estoy modificando ese objeto en cuestion
                                                 (get map-check 0)))
                    check)))))
 
+;;this en este caso se refiere a flex o a query?
 (defn search [{:keys [threshold tokenize split filter depth -ctx] :as flex}
               query limit callback -recall]
   (let [callback (if (and limit (fn? limit))
@@ -904,12 +977,13 @@
                     0)
         flex (merge flex {:callback callback
                           :limit limit
-                          :threshold threshold})]
-      (callback (search flex -query limit nil true))
+                          :threshold threshold})];;corroborar si esto y limit estan bien
+    (if (and (not -recall) callback)
+      (callback (search flex -query limit nil true));;callback deberia devolver flex....verificarlo. no le agregue los demas objetos modificados porque esta haciendo una recursion y teoricamente tendria que estar terminando por alguna de las otras salidas en las cuales si estarian incluidos. estoy suponiendo que estoy devolviendo this aca
       (if (or (not query) (not (string? query)))
         (merge flex {:result result})
         (let [-query (encode flex -query)
-              flex (merge flex {:-query -query})]
+              flex (merge flex {:-query -query})];;ver si el -query va en value o en flex
           (if (not (count -query))
             (merge flex {:result result})
             (let [words (if (fn? tokenize)
@@ -933,19 +1007,31 @@
                                     :use-contextual use-contextual
                                     :ctx-map ctx-map})]
               (if (or (not use-contextual) (= ctx-map -ctx))
-                (let [fs (for-search flex words use-contextual ctx-map length)]
+                (let [fs (for-search flex words use-contextual ctx-map length)];;aca por ejemplo en js reasigna const resolution = this.resolution. esto significa que el objeto global resolution no se cambia y solo estoy modificandolo internamente en la funcion?. notese de todas maneras que dentro del for no estoy reasignando nada a resolution, ya sea la posible interna o la global
                   (if (fs :result)
                     (merge flex fs)
                     (if found
                       (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
-                      (merge flex {:result result}))))
+                      (merge flex {:result result}))));;ver porque intersect no tiene has-and y porque js usa SUPPORT_SUGGESTION && suggest como argumentos
                 (merge flex {:result result})))))))))
 
-#_(INTERSECT
-   (LENGTH-Z > 1
-             (FOR
-              INIT
-              INNER-FOR)
-             (FIRST-RESULT))
-   (LENGTH-Z)
-   (LIMIT))
+
+;;AVERIGUAR:
+;;else{limit || (limit === 0 ) || (limit = 1000);}
+;;threshold || (threshold = this.threshold || 0);
+;;callback(this.search(_query, limit, null, true));
+;;(_query = query);
+;;_query = this.encode((_query));
+
+
+
+
+;;REVISAR SI TODOS LOS GET A VECTORES O LOS (MAP KEY) ESTAN CORRECTOS
+;;VERIFICAR LA CONTINUIDAD DE LOS ELSE EN INTERSECT Y ADD
+;;VERIFICAR TODOS LOS IF (VARIABLE) QUE PUEDAN REFERIRSE A NUMEROS CON VALOR Y DISTINTOS DE 0
+;;SEGUIR REVISION DE INTERSECT POR FOR-CHICO
+;;REVISAR EN LOS LOOPS SI HAY 2 ASIGNACIONES A UN MISMO ELEMENTO A PARTIR DEL VALOR DE OTRO EN EL QUE ESTE ULTIMO PUEDA HABER SIDO CAMBIADO EN EL MEDIO DE LAS DOS ASIGNACIONES EJ CTX-ROOT/VALUE EN FOR-SEARCH
+
+
+;;CREACION, AGREGADO Y BUSQUEDA DE CONTENIDO Y SU INDEX:
+;;(search(add (init ...)))

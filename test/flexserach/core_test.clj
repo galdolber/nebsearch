@@ -117,16 +117,6 @@
   (is (= true ((f/create-page true "kjask" "asdas") :page)))
   (is (= ((f/create-page "kjnk" false "asdas") :next) nil)))
 
-(deftest remove-index
-  (is (map? (f/remove-index {:a [2 3 2] :b []} 2)))
-  (is (= (f/remove-index {:a [2 3 2] :b []} 2) {:a [3 2], :b []}))
-  (is (= (f/remove-index {:a [2 3 2] :b []} 1) {:a [2 3 2] :b []}))
-  (is (= (f/remove-index {:a [2 2 3 2] :b []} 2) {:a [2 3 2] :b []}))
-  (is (= (f/remove-index {} 2) nil))
-  (is (= (f/remove-index {:a [2 3 2] :b [2]} 2) {:a [3 2]}))
-  (is (= (f/remove-index {:a [2 3 2 {:a []}] :b []} 2) {:a [3 2 {:a []}] :b []}))
-  (is (= (f/remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
-
 (deftest build-dupes
   (is (vector? (f/build-dupes {:resolution 9 :threshold 0})))
   (is (= (f/build-dupes {:resolution 7 :threshold nil}) [{} {} {} {} {} {} {}])))
@@ -173,7 +163,32 @@
 (deftest add-index 
   (is (= (f/add-index ["asd" "as" "a"] {"_ctx" 1} "_ctx" 1 1.5 2 5 4) 1))
   (is (= (f/add-index [{"asd" 1} {"as" 2}  {"a" 3}] {"_ctx" 1} "aaa" 1 1.5 2 5 2)
-         {:score 1.5, :dupes {"_ctx" 1, "aaa" 1.5}, :arr nil})))
+         {:score 1.5 :dupes {"_ctx" 1 "aaa" 1.5} :arr nil}))
+  (is (= (f/add-index [{} {} {} {}] {"asd" 1} "d" 2 1 1 2 2)
+         {:score 2 :dupes {"asd" 1 "d" 2} :arr {"d" [] 1 2}}))
+  (is (= (f/add-index [{} {} {}] {"asd" 1 \a 2 "as" 2} "asd" 2 1 1 2 2) 1)))
+
+(deftest remove-index;;FALTA CORROBORAR CON LA JS
+  (is (map? (f/remove-index {:a [2 3 2] :b []} 2)))
+  (is (= (f/remove-index {:a [2 3 2] :b []} 2) {:a [3 2], :b []}))
+  (is (= (f/remove-index {:a [2 3 2] :b []} 1) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {:a [2 2 3 2] :b []} 2) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {} 2) nil))
+  (is (= (f/remove-index {:a [2 3 2] :b [2]} 2) {:a [3 2]}))
+  (is (= (f/remove-index {:a [2 3 2 {:a []}] :b []} 2) {:a [3 2 {:a []}] :b []}))
+  (is (= (f/remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
+
+(deftest reverse-tokenizer
+  (is (map? (f/reverse-t 3 "asd" [{} {} {} {}] {"asd" 1} 2 false 1 2 3)))
+  (is (= (f/reverse-t 3 "asd" [{} {} {} {}] {"asd" 1} 2 false 1 2 3)
+         {:score 4/3 :dupes {"asd" 1 "" 2/3 "d" 4/3} :arr nil :token "s"})))
+
+(deftest forward-t
+  (is (map? (f/forward-t "asd" {"asd" 1} 3 [{} {} {}] 2 false 1 2 3)))
+  (is (= (f/forward-t "asd" {"asd" 1} 3 [{} {} {}] 2 false 1 2 3)
+         {:score 2 :dupes {"asd" 1 "a" 2 "as" 2} :arr {"as" [] 1 2} :token "asd"}))
+  (is (= (f/forward-t "fghfgh" {"asd" 1} 3 [{"xcxc" :10} {"fghfgh" :88} {}] 2 false 1 2 3)
+         {:score 2 :dupes {"asd" 1 "f" 2 "fg" 2 "fgh" 2} :arr {"xcxc" :10 "fgh" [] 2 2} :token "fghf"})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (deftest limit-true
