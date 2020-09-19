@@ -160,12 +160,6 @@
    :extra global-encoder-extra
    :balance global-encoder-balance})
 
-(defn create-page [cursor page result]
-  ;; TODO str page?
-  (if cursor
-    {:page cursor, :next (if page (str page) nil), :result result}
-    result))
-
 (defn encode [{:keys [encoder stemmer matcher] :as object} value]
   (let [global-matcher []]
     (when value
@@ -486,6 +480,12 @@
     :else flex))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn create-page [cursor page result]
+  ;; TODO str page?
+  (if cursor
+    {:page cursor, :next (if page (str page) nil), :result result}
+    result))
 
 (defn limit-true
   "pointer es nro"
