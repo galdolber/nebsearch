@@ -161,55 +161,61 @@
   (is (= (count ((f/filter-words ["and"] #{"zsc"}) :filtered)) 1)))
 
 (deftest add-index 
-  (is (= (f/add-index ["asd" "as" "a"] {"_ctx" 1} "_ctx" 1 1.5 2 5 4) 1))
-  (is (= (f/add-index [{"asd" 1} {"as" 2}  {"a" 3}] {"_ctx" 1} "aaa" 1 1.5 2 5 2)
+  (is (= (f/add-index {:map ["asd" "as" "a"] :id 1 :threshold 5 :resolution 4} {"_ctx" 1} "_ctx" 1.5 2) 1))
+  (is (= (f/add-index {:map [{"asd" 1} {"as" 2}  {"a" 3}] :id 1 :threshold 5 :resolution 2} {"_ctx" 1} "aaa" 1.5 2)
          {:score 1.5 :dupes {"_ctx" 1 "aaa" 1.5} :arr nil}))
-  (is (= (f/add-index [{} {} {} {}] {"asd" 1} "d" 2 1 1 2 2)
+  (is (= (f/add-index {:map [{} {} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1} "d" 1 1)
          {:score 2 :dupes {"asd" 1 "d" 2} :arr {"d" [] 1 2}}))
-  (is (= (f/add-index [{} {} {}] {"asd" 1 \a 2 "as" 2} "asd" 2 1 1 2 2) 1))
-  (is (= (f/add-index [{}{}{}] {"asd" 1 "as" 2} "a" 2 1 1 2 2)
+  (is (= (f/add-index {:map [{} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1 \a 2 "as" 2} "asd" 1 1) 1))
+  (is (= (f/add-index {:map [{}{}{}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2} "a" 1 1)
          {:score 2, :dupes {"asd" 1, "as" 2, "a" 2}, :arr {"a" [], 1 2}}))
-  (is (= (f/add-index [{}{}{}] {"asd" 1 "as" 2 "a" 2} "" 2 1 1 2 2)
+  (is (= (f/add-index {:map [{}{}{}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2 "a" 2} "" 1 1)
          {:score 2, :dupes {"asd" 1, "as" 2, "a" 2, "" 2}, :arr {"" [], 1 2}})))
 
 (deftest remove-index;;FALTA CORROBORAR CON LA JS
-  (is (map? (f/remove-index {:a [2 3 2] :b []} 2)))
-  (is (= (f/remove-index {:a [2 3 2] :b []} 2) {:a [3 2], :b []}))
-  (is (= (f/remove-index {:a [2 3 2] :b []} 1) {:a [2 3 2] :b []}))
-  (is (= (f/remove-index {:a [2 2 3 2] :b []} 2) {:a [2 3 2] :b []}))
-  (is (= (f/remove-index {} 2) nil))
-  (is (= (f/remove-index {:a [2 3 2] :b [2]} 2) {:a [3 2]}))
-  (is (= (f/remove-index {:a [2 3 2 {:a []}] :b []} 2) {:a [3 2 {:a []}] :b []}))
-  (is (= (f/remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
+  (is (map? (f/remove-index {:map {:a [2 3 2] :b []} :id 2})))
+  (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 2}) {:a [3 2], :b []}))
+  (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 1}) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {:map {:a [2 2 3 2] :b []} :id 2}) {:a [2 3 2] :b []}))
+  (is (= (f/remove-index {:map {} :id 2}) nil))
+  (is (= (f/remove-index {:map {:a [2 3 2] :b [2]} :id 2}) {:a [3 2]}))
+  (is (= (f/remove-index {:map {:a [2 3 2 {:a []}] :b []} :id 2}) {:a [3 2 {:a []}] :b []}))
+  (is (= (f/remove-index {:map {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} :id 2}) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
 
-(deftest reverse-tokenizer
-  (is (map? (f/reverse-t 3 "asd" [{} {} {} {}] {"asd" 1} 2 false 1 2 3)))
-  (is (= (f/reverse-t 3 "asd" [{} {} {} {}] {"asd" 1} 2 false 1 2 3)
+(deftest reverse-t
+  (is (map? (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd" {"asd" 1} 1)))
+  (is (= (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)
          {:score 4/3 :dupes {"asd" 1 "" 2/3 "d" 4/3} :arr nil :token "s"})))
 
 (deftest forward-t
-  (is (map? (f/forward-t "asd" {"asd" 1} 3 [{} {} {}] 2 false 1 2 3)))
-  (is (= (f/forward-t "asd" {"asd" 1} 3 [{} {} {}] 2 false 1 2 3)
+  (is (map? (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3}"asd" {"asd" 1} 3 1)))
+  (is (= (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} "asd" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "a" 2 "as" 2} :arr {"as" [] 1 2} :token "asd"}))
-  (is (= (f/forward-t "fghfgh" {"asd" 1} 3 [{"xcxc" :10} {"fghfgh" :88} {}] 2 false 1 2 3)
+  (is (= (f/forward-t {:map [{"xcxc" :10} {"fghfgh" :88} {}] :id 2 :rtl false :threshold 2 :resolution 3}"fghfgh" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "f" 2 "fg" 2 "fgh" 2} :arr {"xcxc" :10 "fgh" [] 2 2} :token "fghf"})))
 
 (deftest full-t
-  (is (map? (f/full-t false 3 "asd" [{} {} {}] {"asd" 1} 2 1 2 3)))
-  (is (= (f/full-t false 3 "asd" [{} {} {}] {"asd" 1} 2 1 2 3)
+  (is (map? (f/full-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)))
+  (is (= (f/full-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)
          {:dupes {"asd" 1, "as" 2, "a" 2, "sd" 4/3, "s" 4/3, "d" 2/3}, :partial-score 0})))
 
 (deftest default-t
-  (is (= (f/default-t {:ctx {"_ctx" [{}]}} [{} {} {} {} {}] {"asd" 1, :ctx {"asd" 2}} "asd" 2 1 1 3 2 3 2 ["_ctx" "aaa"])
-         [{:ctx {"_ctx" [{}], "asd" [{} {}]}} {:dupes {"asd" 1, :ctx {"asd" 2}}}])))
+  (is (= (f/default-t {:map [{} {} {} {} {}] :id 2 :threshold 1 :resolution 3 :depth 2 :ctx {"_ctx" [{}]}}  {"asd" 1, :ctx {"asd" 2}} "asd" 1 3 2 ["_ctx" "aaa"])
+         [{:map [{} {} {} {} {}]
+           :id 2
+           :threshold 1
+           :resolution 3
+           :depth 2
+           :ctx {"_ctx" [{}] "asd" [{} {}]}}
+          {:dupes {"asd" 1 :ctx {"asd" 2}}}])))
 
 (deftest for-add;;FALTAN PROBAR LOS OTROS TOKENIZERS
-  (is (map? (f/for-add {:ctx {"perro" 1}} ["perro" "gato" "cama"] false 4 "forward" {"asd" 1} [{}{}{}] 2 3 5 2)))
-  (is (= (f/for-add {:ctx {"perro" 1}} ["perro" "gato" "cama"] false 4 "forward" {"asd" 1} [{} {} {}] 2 3 5 2)
-         {:ctx {"perro" 1}
+  (is (map? (f/for-add {:map [{} {} {}] :id 2 :rtl false :threshold 3 :resolution 5 :depth 2 :ctx {"perro" 1}} ["perro" "gato" "cama"] 4 "forward" {"asd" 1})))
+  (is (= (f/for-add {:map [{} {} {}] :id 2 :rtl false :threshold 3 :resolution 5 :depth 2 :ctx {"perro" 1}} ["perro" "gato" "cama"] 4 "forward" {"asd" 1})
+         {:context-score 1/4
           :value nil
-          :length 0
-          :context-score 1/4
+          :threshold 3
+          :resolution 5
           :token "cama"
           :dupes {"pe" 4
                   "p" 4
@@ -225,7 +231,13 @@
                   "perr" 4
                   "perro" 4
                   "c" 7/2}
-          :score 7/2})))
+          :id 2
+          :score 7/2
+          :length 0
+          :depth 2
+          :ctx {"perro" 1}
+          :map [{} {} {}]
+          :rtl false})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (deftest limit-true
