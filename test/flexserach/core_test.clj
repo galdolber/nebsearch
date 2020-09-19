@@ -145,8 +145,8 @@
   (is (= ((f/init {:resolution 0 :threshold 0 :preset :memory :encoder nil}) :resolution) 1)))
 
 (deftest encode
-  (is (string? (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :-matcher f/simple-regex} "dfsdd    dfational")))
-  (is (= (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :-matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
+  (is (string? (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational")))
+  (is (= (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
 
 (deftest filter-words
   (is (vector? ((f/filter-words [] #{"zsc"}) :filtered)))
@@ -166,7 +166,11 @@
          {:score 1.5 :dupes {"_ctx" 1 "aaa" 1.5} :arr nil}))
   (is (= (f/add-index [{} {} {} {}] {"asd" 1} "d" 2 1 1 2 2)
          {:score 2 :dupes {"asd" 1 "d" 2} :arr {"d" [] 1 2}}))
-  (is (= (f/add-index [{} {} {}] {"asd" 1 \a 2 "as" 2} "asd" 2 1 1 2 2) 1)))
+  (is (= (f/add-index [{} {} {}] {"asd" 1 \a 2 "as" 2} "asd" 2 1 1 2 2) 1))
+  (is (= (f/add-index [{}{}{}] {"asd" 1 "as" 2} "a" 2 1 1 2 2)
+         {:score 2, :dupes {"asd" 1, "as" 2, "a" 2}, :arr {"a" [], 1 2}}))
+  (is (= (f/add-index [{}{}{}] {"asd" 1 "as" 2 "a" 2} "" 2 1 1 2 2)
+         {:score 2, :dupes {"asd" 1, "as" 2, "a" 2, "" 2}, :arr {"" [], 1 2}})))
 
 (deftest remove-index;;FALTA CORROBORAR CON LA JS
   (is (map? (f/remove-index {:a [2 3 2] :b []} 2)))
@@ -189,6 +193,39 @@
          {:score 2 :dupes {"asd" 1 "a" 2 "as" 2} :arr {"as" [] 1 2} :token "asd"}))
   (is (= (f/forward-t "fghfgh" {"asd" 1} 3 [{"xcxc" :10} {"fghfgh" :88} {}] 2 false 1 2 3)
          {:score 2 :dupes {"asd" 1 "f" 2 "fg" 2 "fgh" 2} :arr {"xcxc" :10 "fgh" [] 2 2} :token "fghf"})))
+
+(deftest full-t
+  (is (map? (f/full-t false 3 "asd" [{} {} {}] {"asd" 1} 2 1 2 3)))
+  (is (= (f/full-t false 3 "asd" [{} {} {}] {"asd" 1} 2 1 2 3)
+         {:dupes {"asd" 1, "as" 2, "a" 2, "sd" 4/3, "s" 4/3, "d" 2/3}, :partial-score 0})))
+
+(deftest default-t
+  (is (= (f/default-t {:ctx {"_ctx" [{}]}} [{} {} {} {} {}] {"asd" 1, :ctx {"asd" 2}} "asd" 2 1 1 3 2 3 2 ["_ctx" "aaa"])
+         [{:ctx {"_ctx" [{}], "asd" [{} {}]}} {:dupes {"asd" 1, :ctx {"asd" 2}}}])))
+
+(deftest for-add;;FALTAN PROBAR LOS OTROS TOKENIZERS
+  (is (map? (f/for-add {:ctx {"perro" 1}} ["perro" "gato" "cama"] false 4 "forward" {"asd" 1} [{}{}{}] 2 3 5 2)))
+  (is (= (f/for-add {:ctx {"perro" 1}} ["perro" "gato" "cama"] false 4 "forward" {"asd" 1} [{} {} {}] 2 3 5 2)
+         {:ctx {"perro" 1}
+          :value nil
+          :length 0
+          :context-score 1/4
+          :token "cama"
+          :dupes {"pe" 4
+                  "p" 4
+                  "gat" 15/4
+                  "cam" 7/2
+                  "ca" 7/2
+                  "asd" 1
+                  "ga" 15/4
+                  "cama" 7/2
+                  "g" 15/4
+                  "gato" 15/4
+                  "per" 4
+                  "perr" 4
+                  "perro" 4
+                  "c" 7/2}
+          :score 7/2})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (deftest limit-true
@@ -292,6 +329,6 @@
          {:map-check [1] :countt 1 :map-found true})))
 
 (deftest for-search
-  (is (map? (f/for-search {:resolution 2 :threshold 2 :-map[]} ["add" "as" "a"] false {"f" 1} 3)))
-  (is (= (f/for-search {:resolution 2 :threshold 2 :-map[]} ["add" "as" "a"] false {"f" 1} 3)
+  (is (map? (f/for-search {:resolution 2 :threshold 2 :map[]} ["add" "as" "a"] false {"f" 1} 3)))
+  (is (= (f/for-search {:resolution 2 :threshold 2 :map[]} ["add" "as" "a"] false {"f" 1} 3)
          {:found false, :ctx-root nil, :check-words {}, :check [], :return []})))

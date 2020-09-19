@@ -166,33 +166,33 @@
     {:page cursor, :next (if page (str page) nil), :result result}
     result))
 
-(defn encode [{:keys [encoder stemmer -matcher] :as object} value]
+(defn encode [{:keys [encoder stemmer matcher] :as object} value]
   (let [global-matcher []]
     (when value
       (cond
         stemmer (replace-regexes (if encoder
-                                   (encoder (if (count -matcher)
+                                   (encoder (if (count matcher)
                                               (replace-regexes (if (count global-matcher)
                                                                  (replace-regexes value
                                                                                   global-matcher)
-                                                                 value) -matcher)
+                                                                 value) matcher)
                                               value))
                                    value) stemmer)
-        encoder (encoder (if (count -matcher)
+        encoder (encoder (if (count matcher)
                            (replace-regexes (if (count global-matcher)
                                               (replace-regexes value
                                                                global-matcher)
-                                              value) -matcher)
+                                              value) matcher)
                            value))
-        (count -matcher) (replace-regexes (if (count global-matcher)
+        (count matcher) (replace-regexes (if (count global-matcher)
                                             (replace-regexes value
                                                              global-matcher)
-                                            value) -matcher)
+                                            value) matcher)
         (count global-matcher) (replace-regexes value
                                                 global-matcher)
         :else "error"))))
 
-(defn filter-words [words fn-or-map]
+(defn filter-words [words fn-or-map];;ver porque me parece que funciona al reves
   (let [length (count words)
         has-function (fn? fn-or-map)]
     (loop [i 0
@@ -238,7 +238,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn add-index [map dupes value id partial-score context-score threshold resolution]
-  (or (dupes value)
+  (or (if (number? dupes)
+        dupes
+        (dupes value))
       (let [score (if (pos? partial-score)
                     (+ (* (- resolution (or threshold (/ resolution 1.5))) context-score)
                        (* (or threshold (/ resolution 1.5)) partial-score))
@@ -275,42 +277,42 @@
                               (inc cc)))))
            (inc c))))))
 
-(defn for-remove-flex [resolution threshold -map id]
+(defn for-remove-flex [resolution threshold map id]
   (loop [z 0
-         -map -map
+        map map
          ret []]
     (if (= z (- resolution (or threshold 0))) ret
         (recur (inc z)
-               (rest -map)
-               (conj ret (remove-index (first -map) id))))))
+               (rest map)
+               (conj ret (remove-index (first map) id))))))
 
-(defn remove-flex [{:keys [-ids depth -map resolution threshold -ctx] :as flex}
+(defn remove-flex [{:keys [ids depth map resolution threshold ctx] :as flex};;ids es un objeto
                    id callback -recall]
   (let [index (str "@" id)]
-    (if (-ids index)
+    (if (ids index)
       (if (and (not -recall)
                callback)
         (callback (remove-flex flex id nil true))
         (assoc (if depth
                  (assoc flex
-                        :-ctx (remove-index -ctx id)
-                        :-map (for-remove-flex resolution threshold -map id))
+                        :ctx (remove-index ctx id)
+                        :map (for-remove-flex resolution threshold map id))
                  (assoc flex
-                        :-map (for-remove-flex resolution threshold -map id)))
-               :-ids (dissoc -ids index)))
+                        :map (for-remove-flex resolution threshold map id)))
+               :ids (dissoc ids index)))
       flex)))
 
 (declare add)
-(defn update-flex [{:keys [-ids] :as flex}
+(defn update-flex [{:keys [ids] :as flex}
                    id content callback -recall]
   (let [index (str "@" id)]
-    (if (and (-ids index) (string? content))
+    (if (and (ids index) (string? content))
       (add (remove-flex flex id callback -recall) id content callback true nil)
       flex)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn reverse-t [length value -map dupes id rtl context-score threshold resolution]
+(defn reverse-t [length value map dupes id rtl context-score threshold resolution]
   (loop [a length
          b (dec a)
          token (str (get value a) "")
@@ -320,127 +322,142 @@
         (recur (dec a)
                (dec b)
                (str (get value (dec a)))
-               ((add-index -map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)) :dupes)
-               (merge ret (add-index -map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)))))))
+               ((add-index map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)) :dupes)
+               (merge ret (add-index map dupes token id (if rtl 1 (/ (- length b) length)) context-score threshold (dec resolution)))))))
 
-(defn forward-t [value dupes length -map id rtl context-score threshold resolution]
+(defn forward-t [value dupes length map id rtl context-score threshold resolution]
   (loop [a 0
          token (str (get value a));;token es un string
          dupes dupes
          ret {}]
-    (prn a token dupes ret)
     (if (= a length) (merge ret {:token token})
         (recur (inc a)
                (str token (get value (inc a)))
-               (if (map? (add-index -map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
-                 ((add-index -map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)) :dupes)
+               (if (map? (add-index map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
+                 ((add-index map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)) :dupes)
                  dupes)
-               (if (map? (add-index -map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
-                 (merge ret (add-index -map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
+               (if (map? (add-index map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
+                 (merge ret (add-index map dupes token id (if rtl (/ (+ a 1) length) 1) context-score threshold (dec resolution)))
                  ret)))))
 
-(defn for-full-t [x length value -map dupes id partial-score context-score threshold resolution]
+(defn for-full-t [x length value map dupes id partial-score context-score threshold resolution]
   (loop [y length
          token (subs value x y)
          dupes dupes
-         ret {}]
+         ret {:dupes dupes}]
     (if (= y x) (merge ret {:token token})
         (recur (dec y)
                (subs value x (dec y))
-               ((add-index -map dupes token id partial-score context-score threshold (dec resolution)) :dupes)
-               (merge ret (add-index -map dupes token id partial-score context-score threshold (dec resolution)))))))
+               (if (map? (add-index map dupes token id partial-score context-score threshold (dec resolution)))
+                 ((add-index map dupes token id partial-score context-score threshold (dec resolution)) :dupes)
+                 dupes)
+               (if (map? (add-index map dupes token id partial-score context-score threshold (dec resolution)))
+                 (merge ret (add-index map dupes token id partial-score context-score threshold (dec resolution)))
+                 ret)))))
 
-(defn full-t [rtl length value -map dupes id context-score threshold resolution]
+(defn full-t [rtl length value map dupes id context-score threshold resolution]
   (loop [x 0
          partial-score (/ (if rtl (inc x) (- length x)) length)
          ret {}]
     (if (= x length) (merge ret {:partial-score partial-score})
         (recur (inc x)
                (/ (if rtl (inc (inc x)) (- length (inc x))) length)
-               (merge ret (for-full-t x length value -map dupes id partial-score context-score threshold resolution))))))
+               (assoc ret :dupes (merge (ret :dupes) ((for-full-t x length value map dupes id partial-score context-score threshold resolution) :dupes)))))))
 
 (defn create-object-array [countt]
   (vec (concat [] (repeat countt {}))))
 
-
 (defn default-t [flex
-                 -map dupes value id context-score threshold resolution depth word-length i words]
-  (let [result (add-index -map dupes value id 1 context-score threshold (dec resolution))
-        score (or (result :score) result)
-        dupes (result :dupes)]
-    (if (and depth (< 1 word-length) (<= threshold score))
-      (let [ctxdupes (or (get-in dupes [:-ctx value])
-                         (assoc-in dupes [:-ctx value] {}))
-            ctxtmp (or (get-in flex [:-ctx value])
-                       (assoc-in flex [:-ctx value] (vec (concat [] (repeat (- resolution (or threshold 0)) {})))))
+                map dupes value id context-score threshold resolution depth word-length i words]
+  (let [result (add-index map dupes value id 1 context-score threshold (dec resolution))
+        score (if (map? result)
+                (result :score)
+                result)
+        dupes (if (map? result)
+                (result :dupes)
+                dupes)]
+    (if (and depth
+             (< 1 word-length)
+             (<= threshold score))
+      (let [ctxdupes (or (get-in dupes [:ctx value]) (assoc-in dupes [:ctx value] {}))
+            ctxtmp (or (get-in flex [:ctx value]) (vec (concat [] (repeat (- resolution (or threshold 0)) {}))))
+            flex (assoc-in flex [:ctx value] (vec (concat [] (repeat (- resolution (or threshold 0)) {}))))
             x (if (< (- i depth) 0) 0 (- i depth))
             y (if (< word-length (+ i depth 1)) word-length (+ i depth 1))
-            a-i (loop [x x
-                       dupes dupes
-                       ret {}]
-                  (if (= x y) ret
-                      (recur (inc x)
-                             (if (not= x i)
-                               ((add-index ctxtmp ctxdupes (get words (inc x)) id 0 (- resolution (if (< (inc x) i) (- i (inc x)) (- (inc x) i))) threshold (dec resolution)) :dupes)
-                               dupes)
-                             (if (not= x i)
-                               (merge ret (add-index ctxtmp ctxdupes (get words (inc x)) id 0 (- resolution (if (< (inc x) i) (- i (inc x)) (- (inc x) i))) threshold (dec resolution)))
-                               ret))))]
-        (merge flex result a-i))
-      (merge flex result))))
+            dupes (loop [x x
+                         dupes dupes]
+                    (if (= x y) dupes
+                        (recur (inc x)
+                               (if (not= x i)
+                                 (if (map? (add-index ctxtmp ctxdupes (get words x) id 0 (- resolution (if (< x i) (- i x) (- x i))) threshold (dec resolution)))
+                                   ((add-index ctxtmp ctxdupes (get words x) id 0 (- resolution (if (< x i) (- i x) (- x i))) threshold (dec resolution)) :dupes)
+                                   dupes)
+                                 dupes))))]
+        [flex {:dupes dupes}])
+      {:dupes dupes})))
 
 (defn for-add [flex
-               words rtl word-length tokenizer dupes -map id threshold resolution depth]
+               words rtl word-length tokenizer dupes map id threshold resolution depth]
   (loop [i 0
          value (get words i)
          length (count value)
-         context-score (/ (if rtl
-                            (+ i 1)
-                            (- word-length i))
-                          word-length)
+         context-score (/ (if rtl (+ i 1) (- word-length i)) word-length)
          token nil
-         ret {}]
-    (cond (and value
-               (= i word-length)) (merge flex
-                                         {:value value
-                                          :length length
-                                          :context-score context-score
-                                          :token token}
-                                         ret)
-          (= i word-length) (merge flex {:value value})
+         dupes dupes
+         score nil]
+    (cond (= i word-length) (merge flex
+                                   {:value value
+                                    :length length
+                                    :context-score context-score
+                                    :token token;;como se si todos estos valores van en el flex o no?
+                                    :dupes dupes
+                                    :score score})
           :else (recur (inc i);;i
                        (get words (inc i));;value
                        (if value;;length
                          (count (get words (inc i)))
                          length)
                        (if value;;context-score
-                         (/ (if rtl
-                              (inc (+ i 1))
-                              (- word-length (inc i)))
-                            word-length)
+                         (/ (if rtl (+ i (inc 1)) (- word-length (inc i))) word-length)
                          context-score)
                        (if value;;token
                          (case tokenizer
-                           ("both" "reverse") ""
-                           "forward" ((forward-t value dupes length -map id rtl context-score threshold resolution) :token)
-                           "full" ((full-t rtl length value -map dupes id context-score threshold resolution) :token)
+                           "reverse" ""
+                           "forward" ((forward-t value dupes length map id rtl context-score threshold resolution) :token)
+                           "both" ((forward-t value
+                                              ((reverse-t length value map dupes id rtl context-score threshold resolution) :dupes)
+                                              length map id rtl context-score threshold resolution) :token)
+                           "full" ((full-t rtl length value map dupes id context-score threshold resolution) :token)
                            "default" token)
                          token)
-                       (if value;;ret
+                       (if value;;dupes
                          (case tokenizer
-                           ("both" "reverse") (merge ret (reverse-t length value -map dupes id rtl context-score threshold resolution))
-                           "forward" (merge ret (forward-t value dupes length -map id rtl context-score threshold resolution))
-                           "full" (merge ret (full-t rtl length value -map dupes id context-score threshold resolution))
-                           "default" (merge ret (default-t flex -map dupes value id context-score threshold resolution depth word-length i words)))
-                         ret)))))
+                           "reverse" (merge dupes ((reverse-t length value map dupes id rtl context-score threshold resolution) :dupes))
+                           "forward" (merge dupes ((forward-t value dupes length map id rtl context-score threshold resolution) :dupes))
+                           "both" (merge dupes ((forward-t value
+                                                           ((reverse-t length value map dupes id rtl context-score threshold resolution) :dupes)
+                                                           length map id rtl context-score threshold resolution) :dupes))
+                           "full" (merge dupes ((full-t rtl length value map dupes id context-score threshold resolution) :dupes))
+                           "default" (merge dupes ((default-t flex map dupes value id context-score threshold resolution depth word-length i words) :dupes)))
+                         dupes)
+                       (if value;;score
+                         (case tokenizer
+                           "reverse" ((reverse-t length value map dupes id rtl context-score threshold resolution) :score)
+                           "forward" ((forward-t value dupes length map id rtl context-score threshold resolution) :score)
+                           "both" ((forward-t value
+                                              ((reverse-t length value map dupes id rtl context-score threshold resolution) :dupes)
+                                              length map id rtl context-score threshold resolution) :score)
+                           "full" ((full-t rtl length value map dupes id context-score threshold resolution) :score)
+                           "default" ((default-t flex map dupes value id context-score threshold resolution depth word-length i words) :score))
+                         score)))))
 
-(defn add [{:keys [-ids tokenize split filter threshold depth resolution -map rtl] :as flex}
+(defn add [{:keys [ids tokenize split filter threshold depth resolution map rtl] :as flex}
            id content callback -skip-update -recall]
   (cond
     (and content
          (string? content)
          (or id (= id 0))
-         (and (-ids (str "@" id)) (not -skip-update))) (update-flex flex id content nil nil)
+         (and (ids (str "@" id)) (not -skip-update))) (update-flex flex id content nil nil)
     (and content
          (string? content)
          (or id (= id 0))
@@ -458,10 +475,10 @@
                                      words (if filter
                                              (filter-words words filter)
                                              words)
-                                     dupes {:-ctx {}}
+                                     dupes {:ctx {}}
                                      word-length (count words)
-                                     fff (for-add flex words rtl word-length tokenizer dupes -map id threshold resolution depth)
-                                     fff (assoc-in fff [-ids (str "@" id)] 1)
+                                     fff (for-add flex words rtl word-length tokenizer dupes map id threshold resolution depth)
+                                     fff (assoc-in fff [ids (str "@" id)] 1)
                                      fff (merge fff {:tokenizer tokenizer
                                                      :words words
                                                      :word-length word-length})]
@@ -807,20 +824,20 @@
                  true
                  map-found)))))
 
-(defn for-search [{:keys [resolution threshold -map] :as flex} 
+(defn for-search [{:keys [resolution threshold map] :as flex} ;;para resolution hace una asignacion interna... significa que el resolution global no lo toca?
                   words use-contextual ctx-map length]
   (loop [a 0
          value (get words a)
-         ctx-root nil 
+         ctx-root nil ;;ctx hace referencia a contextual
          check-words {}
          map-check []
          map-found false
          countt 0
-         map (if use-contextual (get ctx-map ctx-root) -map)
+         map (if use-contextual (get ctx-map ctx-root) map)
          check []]
     (cond (= a length) {:ctx-root ctx-root
                         :check-words check-words
-                        :check check}
+                        :check check};;ver por las dudas si no falta found en estas 2 primeras condiciones de terminacion
           (and value
                use-contextual
                (not ctx-root)
@@ -847,7 +864,7 @@
                             (not (get check-words value))
                             map-found)
                      value
-                     ctx-root))
+                     ctx-root));;ojo con el continue que aparece abajo en (!ctx-root) que no lo estoy considerando me parece. me parece que no importa porque yo estoy marcando solo el caso en el que ctx-root asume value, y en el resto de los casos mantiene el valor previo. de todas maneras me parece que no va porque estoy evaluando la misma condicion que en el de arriba. y como esta debajo del cambio que se le realiza si no tenia un valor previo esa condicion nunca se activara. si no tenia valor lo asume y la 2da comprobacion da falso quedando value, y si tenia valor queda con el valor que venia y el continue tampoco se activa
                  (if (and value;;check-words
                           use-contextual
                           (not ctx-root)
@@ -857,12 +874,12 @@
                             (not (get check-words value)))
                      (assoc check-words value 1)
                      check-words))
-                 (if (and value
+                 (if (and value;;map-check. ver si no se modifica tambien en if(map-found) de js
                           (not (get check-words value))
                           map)
                    (let [for-in (for-search-inner resolution threshold map value)]
                      (for-in :map-check))
-                   map-check)
+                   map-check);;ver si el siguiente if, map-found, modifica a map-check cuando aplica sobre el concat.apply
                  (if (and value;;map-found
                           (not (get check-words value))
                           map)
@@ -877,17 +894,18 @@
                    countt)
                  (if (and value;;map
                           (not (get check-words value)))
-                   (if use-contextual (get ctx-map ctx-root) -map)
+                   (if use-contextual (get ctx-map ctx-root) map)
                    map)
                  (if (and value;;check
                           (not (get check-words value))
                           map-found)
                    (assoc check (count check) (if (< 1 countt)
-                                                (concat map-check (concat [] map-check))
+                                                (concat map-check (concat [] map-check));;corroborar si esta bien y ver si en el js al aplicar cncat.apply sobre el objeto para obtener el resultado tambien estoy modificando ese objeto en cuestion
                                                 (get map-check 0)))
                    check)))))
 
-(defn search [{:keys [threshold tokenize split filter depth -ctx] :as flex}
+
+(defn search [{:keys [threshold tokenize split filter depth ctx] :as flex}
               query limit callback -recall]
   (let [callback (if (and limit (fn? limit))
                    limit
@@ -905,6 +923,7 @@
         flex (merge flex {:callback callback
                           :limit limit
                           :threshold threshold})]
+    (if (and (not -recall) callback)
       (callback (search flex -query limit nil true))
       (if (or (not query) (not (string? query)))
         (merge flex {:result result})
@@ -932,7 +951,7 @@
                                     :found found
                                     :use-contextual use-contextual
                                     :ctx-map ctx-map})]
-              (if (or (not use-contextual) (= ctx-map -ctx))
+              (if (or (not use-contextual) (= ctx-map ctx))
                 (let [fs (for-search flex words use-contextual ctx-map length)]
                   (if (fs :result)
                     (merge flex fs)
@@ -940,6 +959,7 @@
                       (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
                       (merge flex {:result result}))))
                 (merge flex {:result result})))))))))
+
 
 #_(INTERSECT
    (LENGTH-Z > 1
