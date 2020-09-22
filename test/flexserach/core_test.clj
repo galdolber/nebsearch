@@ -144,12 +144,12 @@
             :doc false
             :worker false
             :rtl false}));;falla por el regex aun sacandolo del def y poniendolo aparte
-  (is (= ((f/init {:resolution 9 :threshold 9 :preset :memory :encoder nil}) :resolution) 1))
-  (is (= ((f/init {:resolution 0 :threshold 0 :preset :memory :encoder nil}) :resolution) 1)))
+  ;;ESTA LISTO EL OTRO TEST QUE FALLA POR LA FUNCION EN LIMPIEZA
+  )
 
-(deftest encode
-  (is (string? (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational")))
-  (is (= (f/encode {:encoder f/global-encoder-balance :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
+(deftest encode-f
+  (is (string? (f/encode-f {:encode "balance" :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational")))
+  (is (= (f/encode-f {:encode "balance" :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
 
 (deftest filter-words
   (is (vector? ((f/filter-words [] #{"zsc"}) :filtered)))

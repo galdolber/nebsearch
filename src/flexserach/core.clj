@@ -14,15 +14,15 @@
    :resolution 9
    :threshold 0
    :depth 0
-   :split whitespaces})
+   :split #"\W+"})
 
 (def presets
-  {:memory {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
-   :speed {:encode "icase" :tokenize "strict" :threshold 1 :resolution 3 :depth 2}
-   :match {:encode "extra" :tokenize "full" :threshold 1 :resolution 3}
-   :score {:encode "extra" :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
-   :balance {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
-   :fast {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
+  {"memory" {:encode "extra" :tokenize "strict" :threshold 0 :resolution 1}
+   "speed" {:encode "icase" :tokenize "strict" :threshold 1 :resolution 3 :depth 2}
+   "match" {:encode "extra" :tokenize "full" :threshold 1 :resolution 3}
+   "score" {:encode "extra" :tokenize "strict" :threshold 1 :resolution 9 :depth 4}
+   "balance" {:encode "balance" :tokenize "strict" :threshold 0 :resolution 3 :depth 3}
+   "fast" {:encode "icase" :tokenize "strict" :threshold 8 :resolution 9 :depth 1}})
 
 (defn sort-by-length-down [a b] (cond
                                   (> (count a) (count b)) -1
@@ -154,34 +154,36 @@
     (collapse-repeating-chars (replace-regexes (str/lower-case string) balance-regex))))
 
 (def global-encoder
-  {:icase global-encoder-icase
-   :simple global-encoder-simple
-   :advanced global-encoder-advanced
-   :extra global-encoder-extra
-   :balance global-encoder-balance})
+  {"icase" global-encoder-icase
+   "simple" global-encoder-simple
+   "advanced" global-encoder-advanced
+   "extra" global-encoder-extra
+   "balance" global-encoder-balance})
 
-(defn encode [{:keys [encoder stemmer matcher] :as object} value]
+(defn encode-f [{:keys [encode stemmer matcher] :as flex}
+                value]
   (let [global-matcher []]
     (when value
       (cond
-        stemmer (replace-regexes (if encoder
-                                   (encoder (if (count matcher)
-                                              (replace-regexes (if (count global-matcher)
-                                                                 (replace-regexes value
-                                                                                  global-matcher)
-                                                                 value) matcher)
-                                              value))
-                                   value) stemmer)
-        encoder (encoder (if (count matcher)
-                           (replace-regexes (if (count global-matcher)
-                                              (replace-regexes value
-                                                               global-matcher)
-                                              value) matcher)
-                           value))
+        stemmer (replace-regexes (if (global-encoder encode)
+                                   ((global-encoder encode) (if (count matcher)
+                                                              (replace-regexes (if (count global-matcher)
+                                                                                 (replace-regexes value global-matcher)
+                                                                                 value)
+                                                                               matcher)
+                                                              value))
+                                   value)
+                                 stemmer)
+        (global-encoder encode) ((global-encoder encode) (if (count matcher)
+                                                           (replace-regexes (if (count global-matcher)
+                                                                              (replace-regexes value
+                                                                                               global-matcher)
+                                                                              value) matcher)
+                                                           value))
         (count matcher) (replace-regexes (if (count global-matcher)
-                                            (replace-regexes value
-                                                             global-matcher)
-                                            value) matcher)
+                                           (replace-regexes value
+                                                            global-matcher)
+                                           value) matcher)
         (count global-matcher) (replace-regexes value
                                                 global-matcher)
         :else "error"))))
@@ -209,25 +211,23 @@
 (defn build-dupes [{:keys [resolution threshold]}]
   (vec (repeat (- resolution (or threshold 0)) {})))
 
-(defn init [options]
-  (let [{:keys [threshold] :as options} (-> defaults
-                                            (merge options)
-                                            (merge (presets (:preset options))))
+(defn init [options];;options es para poner otras opciones entre las que esta :presets. :presets despues se mergea con el resto
+  (let [{:keys [threshold] :as options} (-> defaults ;; arranco con defaults
+                                            (merge options) ;;agrego opciones extras de las cuales derivo las presets
+                                            (merge (presets (options :presets)))) ;;agrego presets a partir de options
         options (update options
                         :resolution
                         #(if (<= % threshold) (inc threshold) %))
-        {:keys [encoder] :as options} (update options
-                                              :encoder
-                                              #(or (global-encoder %) %))
+        {:keys [encode] :as options} (update options
+                                              :encode
+                                              #(or (global-encoder %) %));;este or me devuelve una funcion POR GLOBAL ENCODER!!!
         options (update options
-                        :filterer
-                        #(when % (set (mapv encoder %))))]
-    (into
-     options
-     {:fmap (build-dupes options)
-      :ctx {}
-      :id {}
-      :timer 0})))
+                        :filter
+                        #(when % (set (mapv (options encode) %))))];;que coleccion va en :filterer???
+    (merge options {:map (build-dupes options);;es flexmap ?
+                    :ctx {}
+                    :ids {}
+                    :timer 0})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;ESTA SOLO TOMA VALORES Y DEVUELVE SCORE O DUPES[VALUE]. NO TOCA NINGUN OBJETO, POR ESO NO HAY THIS Y LOS INPUTS SE PASAN TODOS SEPARADOS
@@ -568,13 +568,13 @@
                                                               :depth depth}) dupes value context-score word-length i words) :score))
                          score)))))
 
-(defn add [{:keys [ids tokenize split filter threshold depth resolution map rtl id] :as flex}
-           content callback -skip-update -recall]
+(defn add [{:keys [ids tokenize split filter threshold depth resolution map rtl] :as flex}
+           id content callback -skip-update -recall]
   (cond
     (and content
          (string? content)
          (or id (= id 0))
-         (and (ids (str "@" id)) (not -skip-update))) (update-flex flex id content nil nil)
+         (and (ids (str "@" id)) (not -skip-update))) (update-flex flex content nil nil)
     (and content
          (string? content)
          (or id (= id 0))
@@ -582,7 +582,7 @@
          callback) (callback (add (merge flex {:id id}) content nil -skip-update true));;ver como aplico callback, aridad y como son las funciones que ingreso a traves de el
     (and content
          (string? content)
-         (or id (= id 0))) (let [content (encode flex content)];;ver porque (content) esta entre parentesis en el js
+         (or id (= id 0))) (let [content (encode-f flex content)];;ver porque (content) esta entre parentesis en el js
                              (if (not (count content))
                                (assoc flex :content content);;ver si tengo que meterlo adentro o armo un vector o un mapa con flex mas content
                                (let [tokenizer tokenize
@@ -1018,8 +1018,8 @@
                                                 (get map-check 0)))
                    check)))))
 
-(defn search [{:keys [threshold tokenize split filter depth ctx] :as flex}
-              query limit callback -recall]
+(defn search [{:keys [threshold tokenize split filter depth ctx limit] :as flex}
+              query callback -recall]
   (let [callback (if (and limit (fn? limit))
                    limit
                    callback)
@@ -1028,25 +1028,20 @@
                 (if (pos? limit)
                   limit
                   (or (= limit 0) 1000)))
-        result []
-        -query query
-        threshold (if (pos? threshold)
-                    threshold
-                    0)
-        flex (merge flex {:callback callback
-                          :limit limit
-                          :threshold threshold})]
-    (if (and (not -recall) callback)
-      (callback (search flex -query limit nil true))
-      (if (or (not query) (not (string? query)))
-        (merge flex {:result result})
-        (let [-query (encode flex -query)
-              flex (merge flex {:-query -query})]
-          (if (not (count -query))
-            (merge flex {:result result})
+        threshold (if (pos? threshold) threshold 0);;corroborar si threshold y limit estan bien asignados
+        flex (merge flex {:limit limit :threshold threshold})]
+    (if (and (not -recall)
+             callback)
+      (callback (search flex query nil true));;callback deberia devolver flex....verificarlo. no le agregue los demas objetos modificados porque esta haciendo una recursion y teoricamente tendria que estar terminando por alguna de las otras salidas en las cuales si estarian incluidos. estoy suponiendo que estoy devolviendo this aca
+      (if (or (not query)
+              (not (string? query)))
+        [flex {:result []}];;ver si hacen falta agregar todo lo demas modificado
+        (let [query (encode-f flex query)]
+          (if (not (count query))
+            [flex {:result []}]
             (let [words (if (fn? tokenize)
-                          (tokenize -query)
-                          (str/split -query split))
+                          (tokenize query)
+                          (str/split query split))
                   words (if filter
                           (filter-words words filter)
                           words)
@@ -1058,21 +1053,21 @@
                   words (if (and (< 1 length) (not (and depth (= tokenize "strict"))))
                           (reverse (sort words))
                           words)
-                  ctx-map nil
-                  flex (merge flex {:words words
-                                    :length length
-                                    :found found
-                                    :use-contextual use-contextual
-                                    :ctx-map ctx-map})]
+                  ctx-map nil]
               (if (or (not use-contextual) (= ctx-map ctx))
                 (let [fs (for-search flex words use-contextual ctx-map length)]
-                  (if (fs :result)
-                    (merge flex fs)
+                  (if (fs :return)
+                    [flex fs]
                     (if found
-                      (merge flex fs {:result (intersect (fs :check) limit nil nil nil)})
-                      (merge flex {:result result}))))
-                (merge flex {:result result})))))))))
+                      [flex (merge fs {:result (intersect (fs :check) limit nil nil nil)})]
+                      [flex (merge fs {:result []})])));;ver porque intersect no tiene has-and y porque js usa SUPPORT_SUGGESTION && suggest como argumentos
+                [flex {:result []}]))))))))
 
+
+
+(def iniciado (init {:presets "match"}))
+
+(def texto (add iniciado 1 "el perro iba caminando por el parque" nil nil nil))
 
 #_(INTERSECT
    (LENGTH-Z > 1
