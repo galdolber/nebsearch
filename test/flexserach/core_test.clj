@@ -108,6 +108,9 @@
   (is (= (f/global-encoder-balance "hhHçkjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "hkjas aslk28jsysd ae ou c k"))
   (is (= (f/global-encoder-balance "kjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "kjas aslk28jsysd ae ou c k")))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;ADD-INIT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (deftest create-page
   (is (map? (f/create-page "kjnk" "kjask" "asdas")))
   (is (string? ((f/create-page "kjnk" "kjask" "asdas") :next)))
@@ -160,19 +163,19 @@
   (is (= ((f/filter-words ["and"] #{"zsc"}) :countt) 1))
   (is (= (count ((f/filter-words ["and"] #{"zsc"}) :filtered)) 1)))
 
-(deftest add-index 
+(deftest add-index
   (is (= (f/add-index {:map ["asd" "as" "a"] :id 1 :threshold 5 :resolution 4} {"_ctx" 1} "_ctx" 1.5 2) 1))
   (is (= (f/add-index {:map [{"asd" 1} {"as" 2}  {"a" 3}] :id 1 :threshold 5 :resolution 2} {"_ctx" 1} "aaa" 1.5 2)
          {:score 1.5 :dupes {"_ctx" 1 "aaa" 1.5} :arr nil}))
   (is (= (f/add-index {:map [{} {} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1} "d" 1 1)
          {:score 2 :dupes {"asd" 1 "d" 2} :arr {"d" [] 1 2}}))
   (is (= (f/add-index {:map [{} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1 \a 2 "as" 2} "asd" 1 1) 1))
-  (is (= (f/add-index {:map [{}{}{}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2} "a" 1 1)
+  (is (= (f/add-index {:map [{} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2} "a" 1 1)
          {:score 2, :dupes {"asd" 1, "as" 2, "a" 2}, :arr {"a" [], 1 2}}))
-  (is (= (f/add-index {:map [{}{}{}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2 "a" 2} "" 1 1)
+  (is (= (f/add-index {:map [{} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2 "a" 2} "" 1 1)
          {:score 2, :dupes {"asd" 1, "as" 2, "a" 2, "" 2}, :arr {"" [], 1 2}})))
 
-(deftest remove-index;;FALTA CORROBORAR CON LA JS
+(deftest remove-index
   (is (map? (f/remove-index {:map {:a [2 3 2] :b []} :id 2})))
   (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 2}) {:a [3 2], :b []}))
   (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 1}) {:a [2 3 2] :b []}))
@@ -180,7 +183,19 @@
   (is (= (f/remove-index {:map {} :id 2}) nil))
   (is (= (f/remove-index {:map {:a [2 3 2] :b [2]} :id 2}) {:a [3 2]}))
   (is (= (f/remove-index {:map {:a [2 3 2 {:a []}] :b []} :id 2}) {:a [3 2 {:a []}] :b []}))
-  (is (= (f/remove-index {:map {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} :id 2}) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []})))
+  (is (= (f/remove-index {:map {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} :id 2}) {:a [{:a [1 3 2]} 3 2 {:a []}] :b []}))
+  (is (= (f/remove-index {:map {:a [2 3 2 {:b [2 3]}]} :id 2}) {:a [3 2 {:b [2 3]}]}))
+  (is (= (f/remove-index {:map {"a" ["fff" {"asd" 2 "fff" 5} 2 2 3 2] "dgfdf" 2} :id 2}) {"a" ["fff" {"asd" 2, "fff" 5} 2 3 2], "dgfdf" 2})))
+
+(deftest remove-flex;;OJO QUE FALTA AGREGAR CALLBACK!!!
+  (is (map? (f/remove-flex {:ids {} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)))
+  (is (= (f/remove-flex {:ids {} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)
+         {:ids {}, :depth 1, :map [{} {} {}], :resolution 2, :threshold 2, :ctx {"asd" 2}}))
+  (is (= (f/remove-flex {:ids {"@1" "aaa"} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)
+         {:ids {}, :depth 1, :map [{} {} {}], :resolution 2, :threshold 2, :ctx {"asd" 2}})))
+
+
+(deftest update-flex)
 
 (deftest reverse-t
   (is (map? (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd" {"asd" 1} 1)))
@@ -188,10 +203,10 @@
          {:score 4/3 :dupes {"asd" 1 "" 2/3 "d" 4/3} :arr nil :token "s"})))
 
 (deftest forward-t
-  (is (map? (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3}"asd" {"asd" 1} 3 1)))
+  (is (map? (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} "asd" {"asd" 1} 3 1)))
   (is (= (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} "asd" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "a" 2 "as" 2} :arr {"as" [] 1 2} :token "asd"}))
-  (is (= (f/forward-t {:map [{"xcxc" :10} {"fghfgh" :88} {}] :id 2 :rtl false :threshold 2 :resolution 3}"fghfgh" {"asd" 1} 3 1)
+  (is (= (f/forward-t {:map [{"xcxc" :10} {"fghfgh" :88} {}] :id 2 :rtl false :threshold 2 :resolution 3} "fghfgh" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "f" 2 "fg" 2 "fgh" 2} :arr {"xcxc" :10 "fgh" [] 2 2} :token "fghf"})))
 
 (deftest full-t
@@ -328,19 +343,21 @@
   (is (= (f/length-z>1 false 2 1 [["a" "fxf"] ["asdd"] ["rrr"]] true 2 true ["a" "b" "c"] 8)
          {:first-result ["a" "fxf"], :result ["a" "fxf" "c"], :countt 2})));;VER SI ESTA BIEN LO DEL CARACTER \a
 
+(deftest intersect
+  (is (map? (f/intersect ["a" "asdd" "rrr"] 8 true ["not"] true)))
+  (is (= (f/intersect ["a" "asdd" "rrr"] 8 true ["not"] true)
+         {:page 0, :next nil, :result []})))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;FIN INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
 
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (deftest for-search-inner
-  (is (map? (f/for-search-inner 2 1 [{"asdasd" 1} {"asd" 2}] "asdasd")))
-  (is (= (f/for-search-inner 2 1 [{"asdasd" 1} {"asd" 2}] "asdasd")
-         {:map-check [1] :countt 1 :map-found true})))
+  (is (map? (f/for-search-inner {:map [{"asdasd" 1} {"asd" 2}] :threshold 1 :resolution 2} "asdasd")))
+  (is (= (f/for-search-inner {:map [{"asdasd" 1} {"asd" 2}] :threshold 1 :resolution 2} "asdasd")
+         {:map [{"asdasd" 1} {"asd" 2}], :threshold 1, :resolution 2, :map-check [1], :countt 1, :map-found true})))
 
 (deftest for-search
-  (is (map? (f/for-search {:resolution 2 :threshold 2 :map[]} ["add" "as" "a"] false {"f" 1} 3)))
-  (is (= (f/for-search {:resolution 2 :threshold 2 :map[]} ["add" "as" "a"] false {"f" 1} 3)
-         {:found false, :ctx-root nil, :check-words {}, :check [], :return []})))
+  (is (map? (f/for-search {:resolution 2 :threshold 2 :map []} ["add" "as" "a"] false {"f" 1} 3)))
+  (is (= (f/for-search {:resolution 2 :threshold 2 :map []} ["add" "as" "a"] false {"f" 1} 3)
+         {:resolution 2, :threshold 2, :map [], :found false, :ctx-root nil, :check-words {}, :check [], :return []})))

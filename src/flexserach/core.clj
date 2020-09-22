@@ -254,22 +254,23 @@
          ret []
          c 0]
     (let [key (first (first coll))
-          value (second (first coll))];;tmp(temporary?, token map?)
+          vectorr (second (first coll))];;tmp(temporary?, token map?)
       (if (= c (count map)) (if (empty? ret) nil
                                 (apply assoc {} (apply concat ret)))
-          (recur (vec (rest coll))
-                 (if (and (= 1 (count value)) (= id (first value))) ret
-                     (loop [vals value
-                            rett []
-                            cc 0]
-                       (cond (= cc (count value)) (conj ret [key rett])
-                             (= id (first vals)) (conj ret [key (into rett (rest vals))])
-                             :else (recur (rest vals)
-                                          (cond (map? (first vals)) (conj rett (remove-index {:map (first vals)
-                                                                                              :id id}))
-                                                (= id (first vals)) rett
-                                                (not= id (first vals)) (conj rett (first vals)))
-                                          (inc cc)))))
+          (recur (vec (rest coll));;coll
+                 (cond
+                   (or (string? vectorr) (number? vectorr)) (conj ret [key vectorr])
+                   (and (= 1 (count vectorr)) (= id (first vectorr))) ret
+                   :else (loop [vals vectorr
+                                rett []
+                                cc 0]
+                           (cond (= cc (count vectorr)) (conj ret [key rett])
+                                 (= id (first vals)) (conj ret [key (into rett (rest vals))])
+                                 :else (recur (rest vals);;vals
+                                              (cond (map? (first vals)) (conj rett (remove-index {:map (first vals) :id id}))
+                                                    (= id (first vals)) rett
+                                                    :else (conj rett (first vals)))
+                                              (inc cc)))))
                  (inc c))))))
 #_(remove-index {:a [{:a [1 2 3 2]} 2 3 2 {:a []}] :b []} 2);;la de js no veo que haga nada.... deja todo como está
 #_(apply assoc {} (apply concat [[:a [1 2 3]]]));;mete adentro del vector tanto assoc como {}. recordar que transforma la coleccion en lista para que pueda ser ejecutada con la funcion al principio 
@@ -281,7 +282,7 @@
   (loop [z 0
          map map;;map es un vector de mapas
          ret []]
-    (if (= z (- resolution (or threshold 0))) ret
+    (if (= z (- resolution (or threshold 0))) (if (= z 0) map ret)
         (recur (inc z)
                (rest map)
                (conj ret (remove-index {:map (first map)
@@ -293,7 +294,7 @@
     (if (ids index);;el valor de ids es a su vez un mapa con llaves string
       (if (and (not -recall)
                callback)
-        (callback (remove-flex flex id nil true));;??? como hago con callback que se llama sin ningun argumento?. creo mque asi esta bien ya que la estaria llamando sobre el flex.. pero porque no figura como this en el js????
+        #_callback(remove-flex flex id nil true);;??? como hago con callback que se llama sin ningun argumento?. creo mque asi esta bien ya que la estaria llamando sobre el flex.. pero porque no figura como this en el js????
         (assoc (if depth
                  (assoc flex
                         :ctx (remove-index {:map ctx
@@ -894,52 +895,37 @@
 
 (defn intersect [arrays limit cursor bool has-not]
   (let [result []
-        length-z (count arrays)]
-    (if (true? cursor)
-      (let [cursor 0
-            pointer ""]
-        (if (< 1 length-z)
-          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not result limit)]
-            (if (lz :return)
-              (lz :return)
-              (if length-z
-                (length-z-true result bool arrays (lz :pointer))
-                (if limit
-                  (limit-true (lz :result) (lz :pointer) limit cursor)
-                  (create-page cursor nil (lz :result))))))
-          (if length-z
-            (length-z-true result bool arrays pointer)
+        length-z (count arrays)
+        pointer (if (true? cursor) "" (and cursor (str/split cursor #":")))
+        cursor (if (true? cursor) 0 nil)];;ver porque cuando activo esto falla
+    (if (< 1 length-z)
+      (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not result limit)]
+        (if (lz :return)
+          (lz :return)
+          (if (pos? length-z)
+            (create-page cursor nil ((length-z-true result bool arrays (lz :pointer)) :result))
             (if limit
-              (limit-true result pointer limit cursor)
-              (create-page cursor nil result)))))
-      (let [pointer (and cursor (str/split cursor #":"))]
-        (if (< 1 length-z)
-          (let [lz (length-z>1 pointer nil length-z arrays cursor nil has-not result limit)]
-            (if (lz :return)
-              (lz :return)
-              (if length-z
-                (length-z-true result bool arrays (lz :pointer))
-                (if limit
-                  (limit-true (lz :result) (lz :pointer) limit cursor)
-                  (create-page cursor nil (lz :result))))))
-          (if length-z
-            (length-z-true result bool arrays pointer)
-            (if limit
-              (limit-true result pointer limit cursor)
-              (create-page cursor nil result))))))))
+              (limit-true (lz :result) (lz :pointer) limit cursor)
+              (create-page cursor nil (lz :result))))))
+      (if (pos? length-z)
+        (create-page cursor nil ((length-z-true result bool arrays pointer) :result))
+        (if limit
+          (limit-true result pointer limit cursor)
+          (create-page cursor nil result))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn for-search-inner [resolution threshold map value]
+(defn for-search-inner [{:keys [map threshold resolution] :as flex}
+                        value]
   (loop [z 0
          map-value (and (get map z) (get-in map [z value]))
          map-check []
          countt 0
          map-found false]
-    (if (= z (- resolution threshold)) {:map-check map-check
-                                        :countt countt
-                                        :map-found map-found}
+    (if (= z (- resolution threshold)) (merge flex {:map-check map-check
+                                                    :countt countt
+                                                    :map-found map-found});;en realidad map-check y map-found los tengo que poner afuera de flex
         (recur (inc z);;z
                (and (get map (inc z)) (get-in map [(inc z) value]));;map-value
                (if map-value;;map-check
@@ -963,23 +949,23 @@
          countt 0
          map (if use-contextual (get ctx-map ctx-root) map)
          check []]
-    (cond (= a length) {:ctx-root ctx-root
-                        :check-words check-words
-                        :check check};;ver por las dudas si no falta found en estas 2 primeras condiciones de terminacion
+    (cond (= a length) (merge flex {:ctx-root ctx-root ;;en realidad estos 3 tendrian que ir fuera de flex
+                                    :check-words check-words
+                                    :check check});;ver por las dudas si no falta found en estas 2 primeras condiciones de terminacion
           (and value
                use-contextual
                (not ctx-root)
-               (not (get ctx-map value))) {:ctx-root ctx-root
-                                           :check-words check-words
-                                           :check check
-                                           :return []};;este es return result
+               (not (get ctx-map value))) (merge flex {:ctx-root ctx-root
+                                                       :check-words check-words
+                                                       :check check
+                                                       :return []});;este es return result
           (and value
                (not (get check-words value))
-               (not map-found)) {:found false
-                                 :ctx-root ctx-root
-                                 :check-words check-words
-                                 :check check
-                                 :return []};;BREAK
+               (not map-found)) (merge flex {:found false
+                                             :ctx-root ctx-root
+                                             :check-words check-words
+                                             :check check
+                                             :return []});;BREAK
           :else (recur
                  (inc a);;a
                  (get words (inc a));;value
@@ -1031,7 +1017,6 @@
                                                 (concat map-check (concat [] map-check));;corroborar si esta bien y ver si en el js al aplicar cncat.apply sobre el objeto para obtener el resultado tambien estoy modificando ese objeto en cuestion
                                                 (get map-check 0)))
                    check)))))
-
 
 (defn search [{:keys [threshold tokenize split filter depth ctx] :as flex}
               query limit callback -recall]
