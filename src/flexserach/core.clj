@@ -148,12 +148,12 @@
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
-(defn init [options]
+(defn init [{:keys [tokenizer split] :as options}]
   (let [encoder (get-encoder (:encoder options))]
-    (-> {:indexer :forward
-         :split #"\W+"}
+    (-> {:indexer :forward}
         (merge options)
         (assoc :encoder encoder)
+        (assoc :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+"))))
         (update :filter #(when % (set (mapv encoder %)))))))
 
 (defn add-index [flex value id]
@@ -202,9 +202,9 @@
   (reduce (fn [flex word]
             (indexer flex add-index word id)) flex words))
 
-(defn flex-add [{:keys [ids tokenizer indexer split filter] :as flex} id content]
+(defn flex-add [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
-        words (if (fn? tokenizer) (tokenizer content) (string/split content split))
+        words (tokenizer content)
         words (set (if filter (filter-words words filter) words))
         indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
@@ -226,10 +226,10 @@
           (update-in [:ids] #(dissoc % id)))
       flex)))
 
-(defn flex-search [{:keys [data tokenizer split filter] :as flex} search]
+(defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when search
     (let [search (encode-value flex search)
-          words (if (fn? tokenizer) (tokenizer search) (string/split search split))
+          words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
       ;; TODO? add threshold?
       (reduce into #{} (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
