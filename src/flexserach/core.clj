@@ -231,14 +231,15 @@
       (reduce into #{} (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
 
 (comment
-  (let [flex (-> (init {:encoder :icase})
+  (let [flex (-> (init {:indexer :full :filter #{"el"}})
                  (flex-add 1 "el Perro iba caminando por el parque")
                  (flex-add 2 "GATOO")
                  (flex-remove 1)
+                 ;;(flex-add 1 "el Perro iba caminando por el parque")
                  )]
-    (println (:data flex))
-    (println (flex-search flex "PErr")) ;; #{}
-    (println (flex-search flex "GATO")) ;; #{2}
+    ;;(println flex)
+    [(flex-search flex "er") ;; #{}
+     (flex-search flex "atoo")] ;;#{2}
     ))
 
 ;;(index-reverse {} add-index "hello" 23)
