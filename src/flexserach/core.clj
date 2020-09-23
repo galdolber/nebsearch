@@ -1,8 +1,6 @@
 (ns flexsearch.core
   (:require [clojure.string :as str]))
 
-(def whitespaces #"\W+")
-
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
 (defn collapse-repeating-chars [string]
