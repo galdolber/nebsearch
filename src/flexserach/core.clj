@@ -156,34 +156,34 @@
         (assoc :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+"))))
         (update :filter #(when % (set (mapv encoder %)))))))
 
-(defn add-index [flex value id]
-  (update-in flex (cons :data (conj (vec (seq value)) :<)) #(conj (or % #{}) id)))
+(defn add-index [data value id]
+  (update-in data (conj (vec (seq value)) :<) #(conj (or % #{}) id)) )
 
-(defn remove-index [flex value id]
-  (update-in flex (cons :data (conj (vec (seq value)) :<)) #(disj (or % #{}) id)))
+(defn remove-index [data value id]
+  (update-in data (conj (vec (seq value)) :<) #(disj (or % #{}) id)))
 
-(defn index-reverse [flex operation value id]
+(defn index-reverse [data operation value id]
   (let [value (vec value)]
-    (reduce (fn [flex n]
-              (operation flex (drop n value) id)) flex (range (count value)))))
+    (reduce (fn [data n]
+              (operation data (drop n value) id)) data (range (count value)))))
 
-(defn index-forward [flex operation value id]
+(defn index-forward [data operation value id]
   (let [value (vec value)]
-    (reduce (fn [flex n]
-              (operation flex (take n value) id)) flex (range (count value)))))
+    (reduce (fn [data n]
+              (operation data (take n value) id)) data (range (count value)))))
 
-(defn index-both [flex operation value id]
-  (index-forward (index-reverse flex operation value id) operation value id))
+(defn index-both [data operation value id]
+  (index-forward (index-reverse data operation value id) operation value id))
 
-(defn index-full [flex operation value id]
+(defn index-full [data operation value id]
   (let [value (vec value)]
     (reduce
-     (fn [flex from]
+     (fn [data from]
        (let [value (drop from value)]
-         (reduce (fn [flex n]
-                   (operation flex (take n value) id)) flex
+         (reduce (fn [data n]
+                   (operation data (take n value) id)) data
                  (range (inc (count value))))))
-     flex
+     data
      (range (dec (count value))))))
 
 (defn get-indexer [indexing]
@@ -195,12 +195,14 @@
     index-forward))
 
 (defn remove-indexes [flex indexer words id]
-  (reduce (fn [flex word]
-            (indexer flex remove-index word id)) flex words))
+  (assoc flex :data
+         (reduce (fn [data word]
+                   (indexer data remove-index word id)) (:data flex) words)))
 
 (defn add-indexes [flex indexer words id]
-  (reduce (fn [flex word]
-            (indexer flex add-index word id)) flex words))
+  (assoc flex :data
+         (reduce (fn [data word]
+                   (indexer data add-index word id)) (:data flex) words)))
 
 (defn flex-add [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
