@@ -95,13 +95,15 @@
    (if-not string
      string
      (let [string (encoder-simple string)]
-       (cond (< 2 (count string)) (if (and (not skip) (< 1 (count string)))
-                                    (collapse-repeating-chars (replace-regexes string advanced-regex))
-                                    (replace-regexes string advanced-regex))
-             (not skip) (if (< 1 (count string))
-                          (collapse-repeating-chars string)
-                          string)
-             :else string)))))
+       (if (< 2 (count string))
+         (if (and (not skip) (< 1 (count string)))
+           (collapse-repeating-chars (replace-regexes string advanced-regex))
+           (replace-regexes string advanced-regex))
+         (if (not skip)
+           (if (< 1 (count string))
+             (collapse-repeating-chars string)
+             string)
+           string))))))
 
 (defn encoder-extra [string]
   (if-not string
