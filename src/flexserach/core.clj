@@ -143,25 +143,8 @@
         encoder
         (replace-regexes stemmer))))
 
-(defn filter-words [words fn-or-map]
-  (let [length (count words)
-        has-function (fn? fn-or-map)]
-    (loop [i 0
-           word (get words 0)
-           filtered []
-          countt 0]
-      (if (= i length) {:filtered filtered
-                        :countt countt}
-          (recur (inc i)
-                 (get words (inc i))
-                 (if (or (and has-function (fn-or-map word))
-                         (and (not has-function) (not (get fn-or-map word))))
-                   (assoc filtered countt word)
-                   filtered)
-                 (if (or (and has-function (fn-or-map word))
-                         (and (not has-function) (not (get fn-or-map word))))
-                   (inc countt)
-                  countt))))))
+(defn filter-words [words filterer]
+  (vec (remove filterer words)))
 
 (defn init [options]
   (let [encoder (:encoder options)
