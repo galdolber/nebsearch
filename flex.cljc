@@ -306,8 +306,8 @@
           flex)))))
 
 (defn search [{:keys [tokenizer filterer resolution] :as flex}
-              {:keys [cursor limit threshold suggest
-                      query] :as query} limit callback recall]
+              {:keys [cursor limit threshold suggest query] :as query}
+              limit callback recall]
   (let [limit (or limit 1000)
         query (encode flex query)
         words (tokenizer query)
@@ -317,11 +317,10 @@
         check []
         check-words {}
         ctx-root nil
-        [use-contextual words]
-        (if (and depth (= tokenize :strict))
-          [true words]
-          ;;TODO?
-          [false (reverse (sort words))])
+        [use-contextual words] (if (and depth (= tokenize :strict))
+                                 [true words]
+                                 ;;TODO?
+                                 [false (reverse (sort words))])
         a 0
         ctx-map nil]
     (if (or (not use-contextual) (= ctx-map (:ctx flex)))
