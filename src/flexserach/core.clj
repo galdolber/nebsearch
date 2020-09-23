@@ -172,7 +172,7 @@
 
 (defn init [options]
   (let [encoder (:encoder options)
-        encoder (or (global-encoder encoder) encoder)]
+        encoder (or (encoder encoder) encoder)]
     (-> (merge options defaults)
         (assoc :encoder encoder)
         (update :filter #(when % (set (mapv encoder %)))))))
