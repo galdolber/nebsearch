@@ -86,20 +86,20 @@
             regexp)
     str))
 
-(defn global-encoder-icase [value]
+(defn encoder-icase [value]
   (str/lower-case value))
 
-(defn global-encoder-simple [value]
+(defn encoder-simple [value]
   (when value
     (let [s (replace-regexes (str/lower-case value) simple-regex)]
       (if (str/blank? s) "" s))))
 
-(defn global-encoder-advanced
-  ([string] (global-encoder-advanced string false))
+(defn encoder-advanced
+  ([string] (encoder-advanced string false))
   ([string skip]
    (if-not string
      string
-     (let [string (global-encoder-simple string)]
+     (let [string (encoder-simple string)]
        (cond (< 2 (count string)) (if (and (not skip) (< 1 (count string)))
                                     (collapse-repeating-chars (replace-regexes string advanced-regex))
                                     (replace-regexes string advanced-regex))
@@ -108,10 +108,10 @@
                           string)
              :else string)))))
 
-(defn global-encoder-extra [string]
+(defn encoder-extra [string]
   (if-not string
     string
-    (let [string (global-encoder-advanced string true)]
+    (let [string (encoder-advanced string true)]
       (if (< 1 (count string))
         (collapse-repeating-chars
          (str/join " "
@@ -130,17 +130,17 @@
                                 (inc c))))))
         string))))
 
-(defn global-encoder-balance [string]
+(defn encoder-balance [string]
   (when string
     (collapse-repeating-chars (replace-regexes (str/lower-case string) balance-regex))))
 
-(defn global-encoder [encoder]
+(defn get-encoder [encoder]
   (case encoder
-    :icase global-encoder-icase
-    :simple global-encoder-simple
-    :advanced global-encoder-advanced
-    :extra global-encoder-extra
-    :balance global-encoder-balance
+    :icase encoder-icase
+    :simple encoder-simple
+    :advanced encoder-advanced
+    :extra encoder-extra
+    :balance encoder-balance
     identity))
 
 (defn encode-value [{:keys [encoder stemmer matcher]} value]
