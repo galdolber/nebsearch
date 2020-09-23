@@ -88,6 +88,7 @@
     (let [s (replace-regexes (string/lower-case value) simple-regex)]
       (if (string/blank? s) "" s))))
 
+;; This one is slow!! optimize
 (defn encoder-advanced
   ([string] (encoder-advanced string false))
   ([string skip]
