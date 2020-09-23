@@ -3,11 +3,6 @@
 
 (def whitespaces #"\W+")
 
-(def defaults
-  {:encoder "icase"
-   :tokenizer "forward"
-   :split #"\W+"})
-
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
 (defn collapse-repeating-chars [string]
@@ -173,7 +168,10 @@
 (defn init [options]
   (let [encoder (:encoder options)
         encoder (or (encoder encoder) encoder)]
-    (-> (merge options defaults)
+    (-> {:encoder "icase"
+         :tokenizer "forward"
+         :split #"\W+"}
+        (merge options)
         (assoc :encoder encoder)
         (update :filter #(when % (set (mapv encoder %)))))))
 
