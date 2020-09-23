@@ -134,7 +134,7 @@
     :advanced encoder-advanced
     :extra encoder-extra
     :balance encoder-balance
-    identity))
+    encoder-icase))
 
 (defn encode-value [{:keys [encoder stemmer matcher]} value]
   (when value
@@ -147,10 +147,8 @@
   (vec (remove filterer words)))
 
 (defn init [options]
-  (let [encoder (:encoder options)
-        encoder (or (get-encoder encoder) encoder)]
-    (-> {:encoder "icase"
-         :indexer "forward"
+  (let [encoder (get-encoder (:encoder options))]
+    (-> {:indexer :forward
          :split #"\W+"}
         (merge options)
         (assoc :encoder encoder)
@@ -203,9 +201,9 @@
             (indexer flex add-index word id)) flex words))
 
 (defn flex-add [{:keys [ids tokenizer indexer split filter] :as flex} id content]
-  (let [words (if (fn? tokenizer) (tokenizer content) (str/split content split))
+  (let [content (encode-value flex content)
+        words (if (fn? tokenizer) (tokenizer content) (str/split content split))
         words (if filter (filter-words words filter) words)
-        words (set (map #(encode-value flex %) words))
         indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
       (-> flex
@@ -226,9 +224,9 @@
 
 (defn flex-search [{:keys [data tokenizer split filter] :as flex} search]
   (when search
-    (let [words (if (fn? tokenizer) (tokenizer search) (str/split search split))
-          words (if filter (filter-words words filter) words)
-          words (set (map #(encode-value flex %) words))]
+    (let [search (encode-value flex search)
+          words (if (fn? tokenizer) (tokenizer search) (str/split search split))
+          words (if filter (filter-words words filter) words)]
       ;; TODO? add threshold?
       (reduce into #{} (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
 
