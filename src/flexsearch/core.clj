@@ -146,3 +146,6 @@
                                                                            ["TAL" "DOLBER"] ))]
           (get (:data flex) "abs")
           #_(flex-search flex "and jus"))))
+
+
+;;prueba de commit desde visualstudio
