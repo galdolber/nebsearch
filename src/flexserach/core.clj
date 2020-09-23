@@ -1,5 +1,6 @@
 (ns flexsearch.core
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as string]
+            [clojure.set :as sets]))
 
 (def char-prev-is-vowel #{\a \e \i \o \u \y})
 
@@ -74,18 +75,18 @@
 (defn replace-regexes [str regexp]
   (if (seq regexp)
     (reduce (fn [str [regex rep]]
-              (str/replace str regex rep))
+              (string/replace str regex rep))
             str
             regexp)
     str))
 
 (defn encoder-icase [value]
-  (str/lower-case value))
+  (string/lower-case value))
 
 (defn encoder-simple [value]
   (when value
-    (let [s (replace-regexes (str/lower-case value) simple-regex)]
-      (if (str/blank? s) "" s))))
+    (let [s (replace-regexes (string/lower-case value) simple-regex)]
+      (if (string/blank? s) "" s))))
 
 (defn encoder-advanced
   ([string] (encoder-advanced string false))
@@ -107,25 +108,25 @@
     (let [string (encoder-advanced string true)]
       (if (< 1 (count string))
         (collapse-repeating-chars
-         (str/join " "
-                   (loop [string (str/split string #" ")
-                          current (get string 0)
-                          c 0]
-                     (if (= c (count string)) string
-                         (recur (if (< 1 (count current))
-                                  (assoc string c
-                                         (str (first current)
-                                              (replace-regexes
-                                               (subs current 1)
-                                               extra-regex)))
-                                  string)
-                                (get string (inc c))
-                                (inc c))))))
+         (string/join " "
+                      (loop [string (string/split string #" ")
+                             current (get string 0)
+                             c 0]
+                        (if (= c (count string)) string
+                            (recur (if (< 1 (count current))
+                                     (assoc string c
+                                            (str (first current)
+                                                 (replace-regexes
+                                                  (subs current 1)
+                                                  extra-regex)))
+                                     string)
+                                   (get string (inc c))
+                                   (inc c))))))
         string))))
 
 (defn encoder-balance [string]
   (when string
-    (collapse-repeating-chars (replace-regexes (str/lower-case string) balance-regex))))
+    (collapse-repeating-chars (replace-regexes (string/lower-case string) balance-regex))))
 
 (defn get-encoder [encoder]
   (case encoder
@@ -202,8 +203,8 @@
 
 (defn flex-add [{:keys [ids tokenizer indexer split filter] :as flex} id content]
   (let [content (encode-value flex content)
-        words (if (fn? tokenizer) (tokenizer content) (str/split content split))
-        words (if filter (filter-words words filter) words)
+        words (if (fn? tokenizer) (tokenizer content) (string/split content split))
+        words (set (if filter (filter-words words filter) words))
         indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
       (-> flex
@@ -225,8 +226,8 @@
 (defn flex-search [{:keys [data tokenizer split filter] :as flex} search]
   (when search
     (let [search (encode-value flex search)
-          words (if (fn? tokenizer) (tokenizer search) (str/split search split))
-          words (if filter (filter-words words filter) words)]
+          words (if (fn? tokenizer) (tokenizer search) (string/split search split))
+          words (set (if filter (filter-words words filter) words))]
       ;; TODO? add threshold?
       (reduce into #{} (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
 
