@@ -230,7 +230,7 @@
           words (if filter (filter-words words filter) words)
           words (set (map #(encode-value flex %) words))]
       ;; TODO? add threshold?
-      (reduce merge (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
+      (reduce into #{} (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
 
 (comment
   (let [flex (-> (init {:encoder :icase})
