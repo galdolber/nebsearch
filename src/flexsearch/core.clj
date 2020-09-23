@@ -1,4 +1,5 @@
 (ns flexsearch.core
+  (:gen-class)
   (:require [clojure.string :as string]
             [clojure.set :as sets]))
 
@@ -59,12 +60,12 @@
         (update :filter #(when % (set (mapv encoder %)))))))
 
 (defn add-index [data ^String value id]
-  (assoc data value (conj (or (get data value) #{}) id))
-  #_(update data value #(conj (or % #{}) id)))
+  #_(assoc data value (conj (or (get data value) #{}) id))
+  (update data value #(conj (or % #{}) id)))
 
 (defn remove-index [data ^String value id]
-  (assoc data value (disj (or (get data value) #{}) id))
-  #_(update data value #(disj (or % #{}) id)))
+  #_(assoc data value (disj (or (get data value) #{}) id))
+  (update data value #(disj (or % #{}) id)))
 
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
@@ -140,18 +141,8 @@
       (apply sets/intersection (mapv data words)))))
 
 (comment
-  (let [flex (-> (init {:indexer :full :filter #{"el"}})
-                 (flex-add 1 "el Perro iba caminando por el parque")
-                 (flex-add 2 "GATOO")
-                 (flex-remove 1)
-                 ;;(flex-add 1 "el Perro iba caminando por el parque")
-                 )]
-    ;;(println flex)
-    [(flex-search flex "er") ;; #{}
-     (flex-search flex "atoo")] ;;#{2}
-    ))
-
-;;(index-reverse {} add-index "hello" 23)
-;;(index-forward {} add-index "hello" 23)
-;;(index-both {} add-index "hello" 23)
-;;(index-full {} add-index "hello" 23)
+  (time (let [flex (init {:indexer :full :encoder :advanced})
+              flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
+                                                                           ["TAL" "DOLBER"] ))]
+          (get (:data flex) "abs")
+          #_(flex-search flex "and jus"))))
