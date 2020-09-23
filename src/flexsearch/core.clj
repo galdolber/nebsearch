@@ -51,22 +51,6 @@
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
-(defn init [{:keys [tokenizer split] :as options}]
-  (let [encoder (get-encoder (:encoder options))]
-    (-> {:indexer :forward :data {}}
-        (merge options)
-        (assoc :encoder encoder)
-        (assoc :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+"))))
-        (update :filter #(when % (set (mapv encoder %)))))))
-
-(defn add-index [data ^String value id]
-  #_(assoc data value (conj (or (get data value) #{}) id))
-  (update data value #(conj (or % #{}) id)))
-
-(defn remove-index [data ^String value id]
-  #_(assoc data value (disj (or (get data value) #{}) id))
-  (update data value #(disj (or % #{}) id)))
-
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
             (operation data (subs value n) id)) data (range (count value))))
@@ -110,8 +94,6 @@
   [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
         words (tokenizer content)
-        words (set (if filter (filter-words words filter) words))
-        indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
       (let [added (sets/difference words old-words)
             deleted (sets/difference old-words words)]
@@ -124,12 +106,6 @@
           (assoc-in [:ids id] words)))))
 
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
-  (let [indexer (get-indexer indexer)]
-    (if-let [old-words (get ids id)]
-      (-> flex
-          (remove-indexes indexer old-words id)
-          (update :ids #(dissoc % id)))
-      flex)))
 
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when (and search data)
@@ -142,7 +118,3 @@
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
-              flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
-                                                                           ["TAL" "DOLBER"] ))]
-          (get (:data flex) "abs")
-          #_(flex-search flex "and jus"))))
