@@ -313,11 +313,11 @@
 
 ;;MODIFICA ITEM DE UN INDEX
 (declare add)
-(defn update-flex [{:keys [ids] :as flex}
-                   id content callback -recall];;callback es de support-callback?
+(defn update-flex [{:keys [id ids] :as flex}
+                   content callback -recall];;callback es de support-callback?
   (let [index (str "@" id)]
     (if (and (ids index) (string? content))
-      (add (merge flex (remove-flex flex id callback -recall) {:id id}) content callback nil true);;ver bien si el true de js corresponde a -skip-update o a -recall
+      (add (merge flex (remove-flex flex id callback -recall)) id content callback nil true);;ver bien si el true de js corresponde a -skip-update o a -recall
       flex)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -579,7 +579,7 @@
          (string? content)
          (or id (= id 0))
          (not -recall)
-         callback) (callback (add (merge flex {:id id}) content nil -skip-update true));;ver como aplico callback, aridad y como son las funciones que ingreso a traves de el
+         callback) (callback (add flex id content nil -skip-update true));;ver como aplico callback, aridad y como son las funciones que ingreso a traves de el
     (and content
          (string? content)
          (or id (= id 0))) (let [content (encode-f flex content)];;ver porque (content) esta entre parentesis en el js
@@ -594,12 +594,12 @@
                                              words)
                                      dupes {:ctx {}}
                                      word-length (count words)
-                                     fff (for-add (merge {:map map
-                                                          :id id
-                                                          :rtl rtl
-                                                          :threshold threshold
-                                                          :resolution resolution
-                                                          :depth depth}) words word-length tokenizer dupes)
+                                     fff (for-add (merge flex {:map map
+                                                               :id id
+                                                               :rtl rtl
+                                                               :threshold threshold
+                                                               :resolution resolution
+                                                               :depth depth}) words word-length tokenizer dupes)
                                      fff (assoc-in fff [ids (str "@" id)] 1)
                                      fff (merge fff {:tokenizer tokenizer
                                                      :words words
@@ -938,7 +938,7 @@
                  true
                  map-found)))))
 
-(defn for-search [{:keys [resolution threshold map] :as flex} ;;para resolution hace una asignacion interna... significa que el resolution global no lo toca?
+(defn for-search [{:keys [map] :as flex} ;;para resolution hace una asignacion interna... significa que el resolution global no lo toca?
                   words use-contextual ctx-map length]
   (loop [a 0
          value (get words a)
@@ -991,19 +991,19 @@
                  (if (and value;;map-check. ver si no se modifica tambien en if(map-found) de js
                           (not (get check-words value))
                           map)
-                   (let [for-in (for-search-inner resolution threshold map value)]
+                   (let [for-in (for-search-inner flex value)]
                      (for-in :map-check))
                    map-check);;ver si el siguiente if, map-found, modifica a map-check cuando aplica sobre el concat.apply
                  (if (and value;;map-found
                           (not (get check-words value))
                           map)
-                   (let [for-in (for-search-inner resolution threshold map value)]
+                   (let [for-in (for-search-inner flex value)]
                      (for-in :map-found))
                    map-found)
                  (if (and value;;countt
                           (not (get check-words value))
                           map)
-                   (let [for-in (for-search-inner resolution threshold map value)]
+                   (let [for-in (for-search-inner flex value)]
                      (for-in :countt))
                    countt)
                  (if (and value;;map
@@ -1068,6 +1068,12 @@
 (def iniciado (init {:presets "match"}))
 
 (def texto (add iniciado 1 "el perro iba caminando por el parque" nil nil nil))
+
+(search (merge texto {:limit 3}) "perr" nil nil)
+
+(do (prn "2")
+    (let [a 1]
+      [a]))
 
 #_(INTERSECT
    (LENGTH-Z > 1
