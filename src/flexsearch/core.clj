@@ -1,7 +1,8 @@
 (ns flexsearch.core
   (:gen-class)
   (:require [clojure.string :as string]
-            [clojure.set :as sets]))
+            [clojure.set :as sets]
+            [flexsearch.data :as sample-data]))
 
 (set! *warn-on-reflection* true)
 
@@ -80,6 +81,22 @@
     :full index-full
     index-forward))
 
+(defn init [{:keys [tokenizer split indexer filter] :as options}]
+  (let [encoder (get-encoder (:encoder options))]
+    (assoc (merge {:ids {} :data {}} options)
+           :indexer (get-indexer indexer)
+           :encoder encoder
+           :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
+           :filter (set (mapv encoder filter)))))
+
+(defn add-index [data ^String value id]
+  #_(assoc data value (conj (or (get data value) #{}) id))
+  (update data value #(conj (or % #{}) id)))
+
+(defn remove-index [data ^String value id]
+  #_(assoc data value (disj (or (get data value) #{}) id))
+  (update data value #(disj (or % #{}) id)))
+
 (defn remove-indexes [flex indexer words id]
   (assoc flex :data
          (reduce (fn [data word]
@@ -94,6 +111,7 @@
   [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
         words (tokenizer content)
+        words (set (if filter (filter-words words filter) words))]
     (if-let [old-words (get ids id)]
       (let [added (sets/difference words old-words)
             deleted (sets/difference old-words words)]
@@ -106,6 +124,11 @@
           (assoc-in [:ids id] words)))))
 
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
+  (if-let [old-words (get ids id)]
+    (-> flex
+        (remove-indexes indexer old-words id)
+        (update :ids #(dissoc % id)))
+    flex))
 
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when (and search data)
@@ -118,3 +141,6 @@
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
+              flex (reduce (fn [flex [k v]]
+                             (flex-add flex k v)) flex (map vector (range) sample-data/data))]
+          (flex-search flex "and jus"))))
