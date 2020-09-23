@@ -195,7 +195,7 @@
          {:ids {}, :depth 1, :map [{} {} {}], :resolution 2, :threshold 2, :ctx {"asd" 2}})))
 
 
-(deftest update-flex)
+(deftest update-flex);;no haria falta porque esta dentro de add
 
 (deftest reverse-t
   (is (map? (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd" {"asd" 1} 1)))
