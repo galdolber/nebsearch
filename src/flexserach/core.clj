@@ -205,7 +205,7 @@
 (defn flex-add [{:keys [ids tokenizer indexer split filter] :as flex} id content]
   (let [words (if (fn? tokenizer) (tokenizer content) (str/split content split))
         words (if filter (filter-words words filter) words)
-        words (mapv #(encode-value flex %) words)
+        words (set (map #(encode-value flex %) words))
         indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
       (-> flex
@@ -228,7 +228,7 @@
   (when search
     (let [words (if (fn? tokenizer) (tokenizer search) (str/split search split))
           words (if filter (filter-words words filter) words)
-          words (mapv #(encode-value flex %) words)]
+          words (set (map #(encode-value flex %) words))]
       ;; TODO? add threshold?
       (reduce merge (mapv (fn [word] (:< (get-in data (seq word)))) words)))))
 
