@@ -148,9 +148,9 @@
 
 (defn init [options]
   (let [encoder (:encoder options)
-        encoder (or (encoder encoder) encoder)]
+        encoder (or (get-encoder encoder) encoder)]
     (-> {:encoder "icase"
-         :tokenizer "forward"
+         :indexer "forward"
          :split #"\W+"}
         (merge options)
         (assoc :encoder encoder)
