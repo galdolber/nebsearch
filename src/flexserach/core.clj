@@ -59,11 +59,11 @@
         (update :filter #(when % (set (mapv encoder %)))))))
 
 (defn add-index [data ^String value id]
-  (assoc! data value (conj (or (get data value) #{}) id))
+  (assoc data value (conj (or (get data value) #{}) id))
   #_(update data value #(conj (or % #{}) id)))
 
 (defn remove-index [data ^String value id]
-  (assoc! data value (disj (or (get data value) #{}) id))
+  (assoc data value (disj (or (get data value) #{}) id))
   #_(update data value #(disj (or % #{}) id)))
 
 (defn index-reverse [data operation ^String value id]
@@ -105,7 +105,7 @@
          (reduce (fn [data word]
                    (indexer data add-index word id)) (:data flex) words)))
 
-(defn flex-add-transient
+(defn flex-add
   [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
         words (tokenizer content)
@@ -122,16 +122,6 @@
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
 
-(defn flex-add
-  ([flex id content]
-   (let [flex (update flex :data transient)
-         flex (flex-add-transient flex id content)]
-     (update flex :data persistent!)))
-  ([flex values]
-   (let [flex (update flex :data transient)
-         flex (reduce (fn [flex [k v]] (flex-add-transient flex k v)) flex values)]
-     (update flex :data persistent!))))
-
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
   (let [indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
@@ -146,7 +136,8 @@
           words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
       ;; TODO? add threshold?
-      (reduce into #{} (mapv data words)))))
+      #_(reduce into #{} (mapv data words))
+      (apply sets/intersection (mapv data words)))))
 
 (comment
   (let [flex (-> (init {:indexer :full :filter #{"el"}})
