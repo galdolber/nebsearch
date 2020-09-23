@@ -207,10 +207,12 @@
         words (set (if filter (filter-words words filter) words))
         indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
-      (-> flex
-          (remove-indexes indexer old-words id)
-          (add-indexes indexer words id)
-          (assoc-in [:ids id] words))
+      (let [added (sets/difference words old-words)
+            deleted (sets/difference old-words words)]
+        (-> flex
+            (remove-indexes indexer deleted id)
+            (add-indexes indexer added id)
+            (assoc-in [:ids id] words)))
       (-> flex
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
