@@ -2,8 +2,10 @@
   (:require [clojure.string :as string]
             [clojure.set :as sets]))
 
+(set! *warn-on-reflection* true)
+
 (defn collapse-repeating-chars [string]
-  (string/replace string #"(.)(?=.*\1)" ""))
+  (apply str (dedupe string)))
 
 (defn ^String normalize [^String str]
   (let [^String normalized (java.text.Normalizer/normalize str java.text.Normalizer$Form/NFD)]
@@ -13,7 +15,9 @@
 
 (defn replace-regexes [^String str regexp]
   (reduce (fn [^String str [regex rep]]
-            (string/replace str regex rep))
+            (if (keyword? regex)
+              (.replaceAll str (name regex) rep)
+              (string/replace str regex rep)))
           str
           regexp))
 
@@ -37,10 +41,9 @@
     :advanced encoder-advanced
     encoder-icase))
 
-(defn encode-value [{:keys [encoder stemmer matcher]} value]
+(defn encode-value [{:keys [encoder stemmer]} value]
   (when value
     (-> value
-        (replace-regexes matcher)
         encoder
         (replace-regexes stemmer))))
 
@@ -49,38 +52,38 @@
 
 (defn init [{:keys [tokenizer split] :as options}]
   (let [encoder (get-encoder (:encoder options))]
-    (-> {:indexer :forward}
+    (-> {:indexer :forward :data {}}
         (merge options)
         (assoc :encoder encoder)
         (assoc :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+"))))
         (update :filter #(when % (set (mapv encoder %)))))))
 
-(defn add-index [data value id]
-  ;;(update-in data (conj (vec (seq value)) :<) #(conj (or % #{}) id))
-  (update data value #(conj (or % #{}) id)))
+(defn add-index [data ^String value id]
+  (assoc! data value (conj (or (get data value) #{}) id))
+  #_(update data value #(conj (or % #{}) id)))
 
-(defn remove-index [data value id]
-  #_(update-in data (conj (vec (seq value)) :<) #(disj (or % #{}) id))
-  (update data value #(disj (or % #{}) id)))
+(defn remove-index [data ^String value id]
+  (assoc! data value (disj (or (get data value) #{}) id))
+  #_(update data value #(disj (or % #{}) id)))
 
-(defn index-reverse [data operation value id]
+(defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
             (operation data (subs value n) id)) data (range (count value))))
 
-(defn index-forward [data operation value id]
+(defn index-forward [data operation ^String value id]
   (reduce (fn [data n]
-            (operation data (subs value 0 n) id)) data (range (count value))))
+            (operation data (subs value 0 n) id)) data (range 1 (inc (count value)))))
 
-(defn index-both [data operation value id]
+(defn index-both [data operation ^String value id]
   (index-forward (index-reverse data operation value id) operation value id))
 
-(defn index-full [data operation value id]
+(defn index-full [data operation ^String value id]
   (reduce
    (fn [data from]
      (let [value (subs value from)]
        (reduce (fn [data n]
                  (operation data (subs value 0 n) id)) data
-               (range (inc (count value))))))
+               (range 1 (inc (count value))))))
    data
    (range (dec (count value)))))
 
@@ -102,7 +105,8 @@
          (reduce (fn [data word]
                    (indexer data add-index word id)) (:data flex) words)))
 
-(defn flex-add [{:keys [ids tokenizer indexer filter] :as flex} id content]
+(defn flex-add-transient
+  [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
         words (tokenizer content)
         words (set (if filter (filter-words words filter) words))
@@ -118,16 +122,26 @@
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
 
+(defn flex-add
+  ([flex id content]
+   (let [flex (update flex :data transient)
+         flex (flex-add-transient flex id content)]
+     (update flex :data persistent!)))
+  ([flex values]
+   (let [flex (update flex :data transient)
+         flex (reduce (fn [flex [k v]] (flex-add-transient flex k v)) flex values)]
+     (update flex :data persistent!))))
+
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
   (let [indexer (get-indexer indexer)]
     (if-let [old-words (get ids id)]
       (-> flex
           (remove-indexes indexer old-words id)
-          (update-in [:ids] #(dissoc % id)))
+          (update :ids #(dissoc % id)))
       flex)))
 
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
-  (when search
+  (when (and search data)
     (let [search (encode-value flex search)
           words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
