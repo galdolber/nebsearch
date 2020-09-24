@@ -141,6 +141,16 @@
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
+<<<<<<< HEAD
+              flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
+                                                                           ["TAL" "DOLBER"] ))]
+          (get (:data flex) "abs")
+          #_(flex-search flex "and jus"))))
+
+
+;;prueba de commit desde visualstudio
+=======
               flex (reduce (fn [flex [k v]]
                              (flex-add flex k v)) flex (map vector (range) sample-data/data))]
           (flex-search flex "and jus"))))
+>>>>>>> refs/remotes/galdolber/master
