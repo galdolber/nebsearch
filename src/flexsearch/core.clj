@@ -1,7 +1,8 @@
 (ns flexsearch.core
   (:gen-class)
   (:require [clojure.string :as string]
-            [clojure.set :as sets]))
+            [clojure.set :as sets]
+            [flexsearch.data :as sample-data]))
 
 (set! *warn-on-reflection* true)
 
@@ -51,22 +52,6 @@
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
-(defn init [{:keys [tokenizer split] :as options}]
-  (let [encoder (get-encoder (:encoder options))]
-    (-> {:indexer :forward :data {}}
-        (merge options)
-        (assoc :encoder encoder)
-        (assoc :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+"))))
-        (update :filter #(when % (set (mapv encoder %)))))))
-
-(defn add-index [data ^String value id]
-  #_(assoc data value (conj (or (get data value) #{}) id))
-  (update data value #(conj (or % #{}) id)))
-
-(defn remove-index [data ^String value id]
-  #_(assoc data value (disj (or (get data value) #{}) id))
-  (update data value #(disj (or % #{}) id)))
-
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
             (operation data (subs value n) id)) data (range (count value))))
@@ -96,6 +81,22 @@
     :full index-full
     index-forward))
 
+(defn init [{:keys [tokenizer split indexer filter] :as options}]
+  (let [encoder (get-encoder (:encoder options))]
+    (assoc (merge {:ids {} :data {}} options)
+           :indexer (get-indexer indexer)
+           :encoder encoder
+           :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
+           :filter (set (mapv encoder filter)))))
+
+(defn add-index [data ^String value id]
+  #_(assoc data value (conj (or (get data value) #{}) id))
+  (update data value #(conj (or % #{}) id)))
+
+(defn remove-index [data ^String value id]
+  #_(assoc data value (disj (or (get data value) #{}) id))
+  (update data value #(disj (or % #{}) id)))
+
 (defn remove-indexes [flex indexer words id]
   (assoc flex :data
          (reduce (fn [data word]
@@ -110,8 +111,7 @@
   [{:keys [ids tokenizer indexer filter] :as flex} id content]
   (let [content (encode-value flex content)
         words (tokenizer content)
-        words (set (if filter (filter-words words filter) words))
-        indexer (get-indexer indexer)]
+        words (set (if filter (filter-words words filter) words))]
     (if-let [old-words (get ids id)]
       (let [added (sets/difference words old-words)
             deleted (sets/difference old-words words)]
@@ -124,12 +124,11 @@
           (assoc-in [:ids id] words)))))
 
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
-  (let [indexer (get-indexer indexer)]
-    (if-let [old-words (get ids id)]
-      (-> flex
-          (remove-indexes indexer old-words id)
-          (update :ids #(dissoc % id)))
-      flex)))
+  (if-let [old-words (get ids id)]
+    (-> flex
+        (remove-indexes indexer old-words id)
+        (update :ids #(dissoc % id)))
+    flex))
 
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when (and search data)
@@ -142,6 +141,7 @@
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
+<<<<<<< HEAD
               flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
                                                                            ["TAL" "DOLBER"] ))]
           (get (:data flex) "abs")
@@ -149,3 +149,8 @@
 
 
 ;;prueba de commit desde visualstudio
+=======
+              flex (reduce (fn [flex [k v]]
+                             (flex-add flex k v)) flex (map vector (range) sample-data/data))]
+          (flex-search flex "and jus"))))
+>>>>>>> refs/remotes/galdolber/master
