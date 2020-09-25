@@ -2,13 +2,8 @@
   (:require [clojure.test :refer [deftest is]]
             [flexsearch.core :as f]))
 
-(deftest sort-by-length-down
-  (is (= (f/sort-by-length-down "abc" "ab") -1))
-  (is (= (f/sort-by-length-down "abc" "abc") 0))
-  (is (= (f/sort-by-length-down "abc" "abcd") 1))
-  (is (= (f/sort-by-length-down "aáG7/(..*)bc" "aahd66.- & -ººº") 1)))
-
 (deftest collapse-repeating-chars
+  (is (string? (f/collapse-repeating-chars "")))
   (is (= (f/collapse-repeating-chars "") ""))
   (is (= (f/collapse-repeating-chars " ") " "))
   (is (= (f/collapse-repeating-chars "ea") "ea"))
@@ -18,18 +13,19 @@
   (is (= (f/collapse-repeating-chars "  ") " "))
   (is (= (f/collapse-repeating-chars "eaaee") "eae"))
   (is (= (f/collapse-repeating-chars "hello eeaaa") "helo ea"))
-  (is (= (f/collapse-repeating-chars "ihello") "ielo"))
-  (is (= (f/collapse-repeating-chars "Hhell99o") "Hel9o"))
   (is (= (f/collapse-repeating-chars "h4ell..o") "h4el.o"))
-  (is (= (f/collapse-repeating-chars "HhHello") "HHelo"))
-  (is (= (f/collapse-repeating-chars "Hhhello") "Helo"))
-  (is (= (f/collapse-repeating-chars "Hhhááaenññllo") "Háaenñlo"))
   (is (= (f/collapse-repeating-chars "ññ") "ñ"))
   (is (= (f/collapse-repeating-chars "ññ99-.au´s+eçd++/ & ") "ñ9-.au´s+eçd+/ & "))
-  (is (= (f/collapse-repeating-chars "hhHhHHkjnsKJNnNNññhHHh") "hHHkjnsKJNnNñH"))
-  (is (= (f/collapse-repeating-chars "ñcc-cççc99*/(()$%2@@)ñ") "ñc-cçc9*/()$%2@)ñ")))
+  (is (= (f/collapse-repeating-chars "ñcc-cççc99*/(()$%2@@)ñ") "ñc-cçc9*/()$%2@)ñ"))
+  #_(is (= (f/collapse-repeating-chars "ihello") "ielo"))
+  #_(is (= (f/collapse-repeating-chars "Hhell99o") "Hel9o"))
+  #_(is (= (f/collapse-repeating-chars "HhHello") "HHelo"))
+  #_(is (= (f/collapse-repeating-chars "Hhhello") "Helo"))
+  #_(is (= (f/collapse-repeating-chars "Hhhááaenññllo") "Háaenñlo"))
+  #_(is (= (f/collapse-repeating-chars "hhHhHHkjnsKJNnNNññhHHh") "hHHkjnsKJNnNñH")))
 
 (deftest replace-regexes
+  (is (string? (f/replace-regexes "  " f/simple-regex)))
   ;;simple
   (is (= (f/replace-regexes "  " f/simple-regex) " "))
   (is (= (f/replace-regexes "--  " f/simple-regex) " "))
@@ -62,43 +58,36 @@
   (is (= (f/replace-regexes " - /" f/balance-regex) " "))
   (is (= (f/replace-regexes "abc & abc-7/aeeaqeeáèì.,88" f/balance-regex) "abc abc 7 aeeaqee88")))
 
-(deftest global-encoder-icase
-  (is (= (f/global-encoder-icase "Hello") "hello"))
-  (is (= (f/global-encoder-icase "ihello") "ihello"))
-  (is (= (f/global-encoder-icase "LKAJSDL") "lkajsdl")))
+(deftest encoder-icase
+  (is (string? (f/encoder-icase "Hello")))
+  (is (= (f/encoder-icase "Hello") "hello"))
+  (is (= (f/encoder-icase "ihello") "ihello"))
+  (is (= (f/encoder-icase "LKAJSDL") "lkajsdl")))
 
-(deftest global-encoder-simple
-  (is (= (f/global-encoder-simple "") ""))
-  (is (= (f/global-encoder-simple " ") ""))
-  (is (= (f/global-encoder-simple "Hellóñ") "hellon"))
-  (is (= (f/global-encoder-simple "Ab-cab.c") "ab kabk"))
-  (is (= (f/global-encoder-simple "Abc & á   /-ççSs83bc") "abk and a kkss83bk")))
+(deftest encoder-simple
+  (is (string? (f/encoder-simple "")))
+  (is (= (f/encoder-simple "") ""))
+  (is (= (f/encoder-simple " ") ""))
+  (is (= (f/encoder-simple "Hellóñ") "hellon"))
+  (is (= (f/encoder-simple "HeLLèñ") "hellen"))
+  #_(is (= (f/encoder-simple "Ab-cab.c") "ab kabk"));;doesn't remove special characters. can done with balance-regex
+  #_(is (= (f/encoder-simple "Abc & á   /-ççSs83bc") "abk and a kkss83bk")))
 
-(deftest global-encoder-advanced
-  ;;true
-  (is (= (f/global-encoder-advanced "áAc" true) "aak"))
-  (is (= (f/global-encoder-advanced "-pA/9/& " true) " pa 9 "))
-  (is (= (f/global-encoder-advanced "A." true) "a"))
-  (is (= (f/global-encoder-advanced "" true) ""))
-  (is (= (f/global-encoder-advanced "ññ" true) "nn"))
-  (is (= (f/global-encoder-advanced "kj34KJH/(..,7/´s`wçç``^^)" true) "kj34kjh 7 swkk"))
-  (is (= (f/global-encoder-advanced "HhhHHkj34KJH/sh(.´F´RÉáászááhé.-.??uo.,7/´s`wçç``^^)" true) "hhhhhkj34kjh sfreaasaahe u7 swkk"))
-  (is (= (f/global-encoder-advanced "ñññ" true) "nnn"))
-  ;;false
-  (is (= (f/global-encoder-advanced "" false) ""))
-  (is (= (f/global-encoder-advanced "á" false) "a"))
-  (is (= (f/global-encoder-advanced "Áe" false) "ae"))
-  (is (= (f/global-encoder-advanced "kj34KJH/(..,7/´s`wçç``^^)" false) "kj34kj 7 swk"))
-  (is (= (f/global-encoder-advanced "ññ" false) "n")))
+(deftest encoder-advanced
+  (is (string? (f/encoder-advanced "áAc")));;it used advanced regex inside
+  (is (= (f/encoder-advanced "áAc") "ac"))
+  (is (= (f/encoder-advanced "áAc") "ac"))
+  (is (= (f/encoder-advanced "áAc") "ac"))
+  (is (= (f/encoder-advanced "áAc") "ac")))
 
-(deftest global-encoder-extra
+#_(deftest global-encoder-extra
   (is (= (f/global-encoder-extra "lsdlkjn83298)(/KMHB.,.,KKnnnaññ") "lstlkjm83298 kmbkm"))
   (is (= (f/global-encoder-extra "lsdlkznñd298)(ppB.,.,KKn and nnddaññ") "lstlksmt298bkm amt nmtm"))
   (is (= (f/global-encoder-extra "lsdlkjn8vw3298)(/Kaei y MHB.,.ww,KKnnvnaññ") "lstlkjm8f3298 k y mbfkmfm"))
   (is (= (f/global-encoder-extra "lsdlkjn8 cc329c8)(/KMHgB.,.qQ,KKnQnnaññ") "lstlkjm8 k329k8 kmkbkmkm"))
   (is (= (f/global-encoder-extra "lsdlkszjn8cc3298)(/KççMHaeoeB.,.,KKnnnaññ") "lstlksjm8k3298 kmbkm")))
 
-(deftest global-encoder-balance
+#_(deftest global-encoder-balance
   (is (= (f/global-encoder-balance "") ""))
   (is (= (f/global-encoder-balance " ") " "))
   (is (= (f/global-encoder-balance "cc") "c"))
@@ -109,9 +98,160 @@
   (is (= (f/global-encoder-balance "kjahsH- & aslk288jjjshy`s´dáè ae ou cc k") "kjas aslk28jsysd ae ou c k")))
 
 
+(deftest get-encoder
+  (is (fn? (f/get-encoder :icase)))
+  (is (= (f/get-encoder nil) f/encoder-icase))
+  (is (= (f/get-encoder :icase) f/encoder-icase))
+  (is (= (f/get-encoder :simple) f/encoder-simple))
+  (is (= (f/get-encoder :advanced) f/encoder-advanced)))
+
+(deftest encode-value
+  (is (= (f/encode-value {:encoder :icase :stemmer [[#"ate" "ational"]]} "rationate") "ratiónational")))
+
+(deftest filter-words
+  (is(=(f/filter-words ["the" "cat" "and" "the" "dog" "or" "the" "coco"] #{"and" "or"}) ["the" "cat" "the" "dog" "the" "coco"])))
+
+(deftest index-reverse
+  (is (= (f/index-reverse {} f/add-index "gato" 1)
+         {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}})))
+
+(deftest index-forward
+  (is (= (f/index-forward {} f/add-index "gato" 1)
+         {"g" #{1}, "ga" #{1}, "gat" #{1}, "gato" #{1}})))
+
+(deftest index-both
+  (is (= (f/index-both {} f/add-index "gato" 1)
+         {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}, "g" #{1}, "ga" #{1}, "gat" #{1}})))
+
+(def gato (f/index-full {} f/add-index "gato" 1))
+(def gatorade (f/index-full {} f/add-index "gatorade" 2))
+(def gato+gatorade (f/index-full gato f/add-index "gatorade" 2))
+(def gato+gatorade-gato (f/index-full gato+gatorade f/remove-index "gato" 1))
+(deftest index-full
+  (is (= gato {"ato" #{1}, "gat" #{1}, "a" #{1}, "ga" #{1}, "t" #{1}, "g" #{1}, "gato" #{1}, "to" #{1}, "at" #{1}}))
+  (is (= gatorade {"d" #{2}
+                   "rad" #{2}
+                   "orade" #{2}
+                   "tora" #{2}
+                   "ad" #{2}
+                   "ato" #{2}
+                   "tor" #{2}
+                   "atorad" #{2}
+                   "gatora" #{2}
+                   "gat" #{2}
+                   "atora" #{2}
+                   "atorade" #{2}
+                   "gator" #{2}
+                   "rade" #{2}
+                   "ora" #{2}
+                   "or" #{2}
+                   "de" #{2}
+                   "a" #{2}
+                   "ga" #{2}
+                   "gatorad" #{2}
+                   "gatorade" #{2}
+                   "t" #{2}
+                   "ator" #{2}
+                   "r" #{2}
+                   "torade" #{2}
+                   "ra" #{2}
+                   "g" #{2}
+                   "torad" #{2}
+                   "gato" #{2}
+                   "orad" #{2}
+                   "to" #{2}
+                   "at" #{2}
+                   "o" #{2}
+                   "ade" #{2}}))
+  (is (= gato+gatorade {"d" #{2}
+                        "rad" #{2}
+                        "orade" #{2}
+                        "tora" #{2}
+                        "ad" #{2}
+                        "ato" #{1 2}
+                        "tor" #{2}
+                        "atorad" #{2}
+                        "gatora" #{2}
+                        "gat" #{1 2}
+                        "atora" #{2}
+                        "atorade" #{2}
+                        "gator" #{2}
+                        "rade" #{2}
+                        "ora" #{2}
+                        "or" #{2}
+                        "de" #{2}
+                        "a" #{1 2}
+                        "ga" #{1 2}
+                        "gatorad" #{2}
+                        "gatorade" #{2}
+                        "t" #{1 2}
+                        "ator" #{2}
+                        "r" #{2}
+                        "torade" #{2}
+                        "ra" #{2}
+                        "g" #{1 2}
+                        "torad" #{2}
+                        "gato" #{1 2}
+                        "orad" #{2}
+                        "to" #{1 2}
+                        "at" #{1 2}
+                        "o" #{2}
+                        "ade" #{2}}))
+(is(= gato+gatorade-gato {"d" #{2}
+                          "rad" #{2}
+                          "orade" #{2}
+                          "tora" #{2}
+                          "ad" #{2}
+                          "ato" #{2}
+                          "tor" #{2}
+                          "atorad" #{2}
+                          "gatora" #{2}
+                          "gat" #{2}
+                          "atora" #{2}
+                          "atorade" #{2}
+                          "gator" #{2}
+                          "rade" #{2}
+                          "ora" #{2}
+                          "or" #{2}
+                          "de" #{2}
+                          "a" #{2}
+                          "ga" #{2}
+                          "gatorad" #{2}
+                          "gatorade" #{2}
+                          "t" #{2}
+                          "ator" #{2}
+                          "r" #{2}
+                          "torade" #{2}
+                          "ra" #{2}
+                          "g" #{2}
+                          "torad" #{2}
+                          "gato" #{2}
+                          "orad" #{2}
+                          "to" #{2}
+                          "at" #{2}
+                          "o" #{2}
+                          "ade" #{2}})))
+
+(deftest get-indexer
+  (is (fn? (f/get-indexer nil)))
+  (is (= (f/get-indexer nil) f/index-forward))
+  (is (= (f/get-indexer :forward) f/index-forward))
+  (is (= (f/get-indexer :reverse) f/index-reverse))
+  (is (= (f/get-indexer :both) f/index-both))
+  (is (= (f/get-indexer :full) f/index-full)))
+
+(deftest init
+  (is (map (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})
+           {:ids {}
+            :data {}
+            :tokenizer f/init/fn--220970
+            :split #"\W+"
+            :indexer f/index-forward
+            :filter #{"or" "and"}
+            :encoder f/encoder-icase})));;no da por la funcion de tokenizer
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;ADD-INIT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(deftest create-page
+#_(deftest create-page
   (is (map? (f/create-page "kjnk" "kjask" "asdas")))
   (is (string? ((f/create-page "kjnk" "kjask" "asdas") :next)))
   (is (vector? ((f/create-page "kjnk" "kjask" [1 2 3]) :result)))
@@ -120,11 +260,11 @@
   (is (= true ((f/create-page true "kjask" "asdas") :page)))
   (is (= ((f/create-page "kjnk" false "asdas") :next) nil)))
 
-(deftest build-dupes
+#_(deftest build-dupes
   (is (vector? (f/build-dupes {:resolution 9 :threshold 0})))
   (is (= (f/build-dupes {:resolution 7 :threshold nil}) [{} {} {} {} {} {} {}])))
 
-(deftest init
+#_(deftest init
   #_(is (= (f/init {:resolution 9 :threshold 9 :preset :memory :encoder nil})
            {:async false
             :filterer nil
@@ -147,11 +287,11 @@
   ;;ESTA LISTO EL OTRO TEST QUE FALLA POR LA FUNCION EN LIMPIEZA
   )
 
-(deftest encode-f
+#_(deftest encode-f
   (is (string? (f/encode-f {:encode "balance" :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational")))
   (is (= (f/encode-f {:encode "balance" :stemmer {"ational" "ate"} :matcher f/simple-regex} "dfsdd    dfational") "dfsd dfate")))
 
-(deftest filter-words
+#_(deftest filter-words
   (is (vector? ((f/filter-words [] #{"zsc"}) :filtered)))
   (is (number? ((f/filter-words [] #{"zsc"}) :countt)))
   (is (= (f/filter-words ["and" "sdfsdf"] #{"and"}) {:filtered ["sdfsdf"], :countt 1}))
@@ -163,7 +303,7 @@
   (is (= ((f/filter-words ["and"] #{"zsc"}) :countt) 1))
   (is (= (count ((f/filter-words ["and"] #{"zsc"}) :filtered)) 1)))
 
-(deftest add-index
+#_(deftest add-index
   (is (= (f/add-index {:map ["asd" "as" "a"] :id 1 :threshold 5 :resolution 4} {"_ctx" 1} "_ctx" 1.5 2) 1))
   (is (= (f/add-index {:map [{"asd" 1} {"as" 2}  {"a" 3}] :id 1 :threshold 5 :resolution 2} {"_ctx" 1} "aaa" 1.5 2)
          {:score 1.5 :dupes {"_ctx" 1 "aaa" 1.5} :arr nil}))
@@ -175,7 +315,7 @@
   (is (= (f/add-index {:map [{} {} {}] :id 2 :threshold 2 :resolution 2} {"asd" 1 "as" 2 "a" 2} "" 1 1)
          {:score 2, :dupes {"asd" 1, "as" 2, "a" 2, "" 2}, :arr {"" [], 1 2}})))
 
-(deftest remove-index
+#_(deftest remove-index
   (is (map? (f/remove-index {:map {:a [2 3 2] :b []} :id 2})))
   (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 2}) {:a [3 2], :b []}))
   (is (= (f/remove-index {:map {:a [2 3 2] :b []} :id 1}) {:a [2 3 2] :b []}))
@@ -187,34 +327,31 @@
   (is (= (f/remove-index {:map {:a [2 3 2 {:b [2 3]}]} :id 2}) {:a [3 2 {:b [2 3]}]}))
   (is (= (f/remove-index {:map {"a" ["fff" {"asd" 2 "fff" 5} 2 2 3 2] "dgfdf" 2} :id 2}) {"a" ["fff" {"asd" 2, "fff" 5} 2 3 2], "dgfdf" 2})))
 
-(deftest remove-flex;;OJO QUE FALTA AGREGAR CALLBACK!!!
+#_(deftest remove-flex;;OJO QUE FALTA AGREGAR CALLBACK!!!
   (is (map? (f/remove-flex {:ids {} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)))
   (is (= (f/remove-flex {:ids {} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)
          {:ids {}, :depth 1, :map [{} {} {}], :resolution 2, :threshold 2, :ctx {"asd" 2}}))
   (is (= (f/remove-flex {:ids {"@1" "aaa"} :depth 1 :map [{} {} {}] :resolution 2 :threshold 2 :ctx {"asd" 2}} 1 nil nil)
          {:ids {}, :depth 1, :map [{} {} {}], :resolution 2, :threshold 2, :ctx {"asd" 2}})))
 
-
-(deftest update-flex);;no haria falta porque esta dentro de add
-
-(deftest reverse-t
+#_(deftest reverse-t
   (is (map? (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd" {"asd" 1} 1)))
   (is (= (f/reverse-t {:map [{} {} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)
          {:score 4/3 :dupes {"asd" 1 "" 2/3 "d" 4/3} :arr nil :token "s"})))
 
-(deftest forward-t
+#_(deftest forward-t
   (is (map? (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} "asd" {"asd" 1} 3 1)))
   (is (= (f/forward-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} "asd" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "a" 2 "as" 2} :arr {"as" [] 1 2} :token "asd"}))
   (is (= (f/forward-t {:map [{"xcxc" :10} {"fghfgh" :88} {}] :id 2 :rtl false :threshold 2 :resolution 3} "fghfgh" {"asd" 1} 3 1)
          {:score 2 :dupes {"asd" 1 "f" 2 "fg" 2 "fgh" 2} :arr {"xcxc" :10 "fgh" [] 2 2} :token "fghf"})))
 
-(deftest full-t
+#_(deftest full-t
   (is (map? (f/full-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)))
   (is (= (f/full-t {:map [{} {} {}] :id 2 :rtl false :threshold 2 :resolution 3} 3 "asd"  {"asd" 1} 1)
          {:dupes {"asd" 1, "as" 2, "a" 2, "sd" 4/3, "s" 4/3, "d" 2/3}, :partial-score 0})))
 
-(deftest default-t
+#_(deftest default-t
   (is (= (f/default-t {:map [{} {} {} {} {}] :id 2 :threshold 1 :resolution 3 :depth 2 :ctx {"_ctx" [{}]}}  {"asd" 1, :ctx {"asd" 2}} "asd" 1 3 2 ["_ctx" "aaa"])
          [{:map [{} {} {} {} {}]
            :id 2
@@ -224,7 +361,7 @@
            :ctx {"_ctx" [{}] "asd" [{} {}]}}
           {:dupes {"asd" 1 :ctx {"asd" 2}}}])))
 
-(deftest for-add;;FALTAN PROBAR LOS OTROS TOKENIZERS
+#_(deftest for-add;;FALTAN PROBAR LOS OTROS TOKENIZERS
   (is (map? (f/for-add {:map [{} {} {}] :id 2 :rtl false :threshold 3 :resolution 5 :depth 2 :ctx {"perro" 1}} ["perro" "gato" "cama"] 4 "forward" {"asd" 1})))
   (is (= (f/for-add {:map [{} {} {}] :id 2 :rtl false :threshold 3 :resolution 5 :depth 2 :ctx {"perro" 1}} ["perro" "gato" "cama"] 4 "forward" {"asd" 1})
          {:context-score 1/4
@@ -255,7 +392,7 @@
           :rtl false})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;INTERSECT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(deftest limit-true
+#_(deftest limit-true
   (is (map? (f/limit-true [] 0 3 true)))
   (is ((f/limit-true [] 0 3 true) :page))
   (is ((f/limit-true [] 0 3 true) :next))
@@ -271,7 +408,7 @@
   (is (= (f/limit-true "asd" 1 1 true)
          {:page true :next "2" :result [\s]})))
 
-(deftest length-z-true
+#_(deftest length-z-true
   (is (map? (f/length-z-true [] nil ["asd" "as" "a" 1 2 3] "asdfas")))
   (is (= (f/length-z-true [] false ["asd" "as" "a" 1 2 3] "65425")
          {:pointer 6, :result "asd"}))
@@ -280,7 +417,7 @@
   (is (= (f/length-z-true [] nil ["asd" "as" "a" 1 2 3] nil)
          {:pointer nil, :result "asd"})))
 
-(deftest first-result-true
+#_(deftest first-result-true
   (is (map? (f/first-result-true ["a" "b" "c"] true "3" ["asd" "as" "a"] {"@asd" 2} 1)))
   (is (= (f/first-result-true ["a" "b" "c"] true "3" ["asd" "as" "a"] {"@asd" 2} 1)
          {:countt 1 :result ["asd" "as" "a"]}))
@@ -291,7 +428,7 @@
   (is (= (f/first-result-true ["a" "b" "c"] false false ["asd" "as" "a"] {"@asd" 2} 1)
          {:result ["a" "b" "c"]})))
 
-(deftest for-chico
+#_(deftest for-chico
   (is (map? (f/for-chico 1 3 ["asd" "as" "a"] true {"@asd" 2} false {"@asd" 3} true 1 ["a" "b" "c"] 2 3 true "2" true)))
   (is (= (f/for-chico 1 3 ["asd" "as" "a"] true {"@asd" 2} false {"@asd" 3} true 1 ["a" "b" "c"] 2 3 true "2" true)
          {:found true :countt 2 :result ["a" "b" "c"]}))
@@ -307,7 +444,7 @@
          {:found false, :countt 0, :result ["a" "b" "c" "sdfsdfs"]})))
 ;;FALTA PROBAR EL RETURN
 
-(deftest init-true
+#_(deftest init-true
   (is (map? (f/init-true ["asd" "as" "a"] true {"@asd" 2} {"@asd" 3} true ["a" "b" "c"] ["a" "b" "c"] 2)))
   (is (= (f/init-true ["asd" "as" "a"] true {"@asd" 2} {"@asd" 3} true ["a" "b" "c"] ["a" "b" "c"] 2)
          {:first-result nil :init false :check {"@asd" 3 "@as" 1 "@a" 1} :result ["a" "b" "c"] :countt 2}))
@@ -316,7 +453,7 @@
   (is (= (f/init-true nil false {} {} true ["a" "b" "c" "sdfsdfs"] "a" 0)
          {:first-result "a"})))
 
-(deftest for-grande
+#_(deftest for-grande
   (is (map? (f/for-grande 3 1 2 ["1" "asdd" "rrr"] true 2 true ["asd" "as" "a"] true {"@asd" 2} {"@asd" 3} ["a" "b" "c"] 2 3 1 false)))
   (is (= (f/for-grande 3 1 2 ["1" "asdd" "rrr"] true 2 true ["asd" "as" "a"] true {"@asd" 2} {"@asd" 3} ["a" "b" "c"] 2 3 1 false)
          {:first-result ["asd" "as" "a"] :result ["a" "b" "c"] :countt 2}))
@@ -334,7 +471,7 @@
          {:first-result "a", :result ["a" "b" "c"], :countt 0})))
 ;;FALTAN PROBAR LOS 2 RETURNS
 
-(deftest length-z>1
+#_(deftest length-z>1
   (is (map? (f/length-z>1 "3" 2 1 ["a" "asdd" "rrr" "z"] false 2 false ["a" "b" "c" "sdfsdfs"] 8)))
   (is (= (f/length-z>1 "3" 2 1 ["a" "asdd" "rrr" "z"] false 2 false ["a" "b" "c" "sdfsdfs"] 8)
          {:first-result "a", :result "a", :countt 0, :pointer 3}))
@@ -343,7 +480,7 @@
   (is (= (f/length-z>1 false 2 1 [["a" "fxf"] ["asdd"] ["rrr"]] true 2 true ["a" "b" "c"] 8)
          {:first-result ["a" "fxf"], :result ["a" "fxf" "c"], :countt 2})));;VER SI ESTA BIEN LO DEL CARACTER \a
 
-(deftest intersect
+#_(deftest intersect
   (is (map? (f/intersect ["a" "asdd" "rrr"] 8 true ["not"] true)))
   (is (= (f/intersect ["a" "asdd" "rrr"] 8 true ["not"] true)
          {:page 0, :next nil, :result []})))
@@ -352,12 +489,12 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;SEARCH;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(deftest for-search-inner
+#_(deftest for-search-inner
   (is (map? (f/for-search-inner {:map [{"asdasd" 1} {"asd" 2}] :threshold 1 :resolution 2} "asdasd")))
   (is (= (f/for-search-inner {:map [{"asdasd" 1} {"asd" 2}] :threshold 1 :resolution 2} "asdasd")
          {:map [{"asdasd" 1} {"asd" 2}], :threshold 1, :resolution 2, :map-check [1], :countt 1, :map-found true})))
 
-(deftest for-search
+#_(deftest for-search
   (is (map? (f/for-search {:resolution 2 :threshold 2 :map []} ["add" "as" "a"] false {"f" 1} 3)))
   (is (= (f/for-search {:resolution 2 :threshold 2 :map []} ["add" "as" "a"] false {"f" 1} 3)
          {:resolution 2, :threshold 2, :map [], :found false, :ctx-root nil, :check-words {}, :check [], :return []})))

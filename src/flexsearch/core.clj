@@ -2,18 +2,67 @@
   (:gen-class)
   (:require [clojure.string :as string]
             [clojure.set :as sets]
-            [flexsearch.data :as sample-data]))
+            #_[flexsearch.data :as sample-data]))
 
 (set! *warn-on-reflection* true)
-
-(defn collapse-repeating-chars [string]
-  (apply str (dedupe string)))
 
 (defn ^String normalize [^String str]
   (let [^String normalized (java.text.Normalizer/normalize str java.text.Normalizer$Form/NFD)]
     (clojure.string/replace normalized #"\p{InCombiningDiacriticalMarks}+" "")))
 
 #_(defn ^string normalize-cljs [^string s] (.replace (.normalize s "NFD") #"[\u0300-\u036f]" ""))
+
+(def simple-regex
+  [[#"[àáâãäå]" "a"]
+   [#"[èéêë]" "e"]
+   [#"[ìíîï]" "i"]
+   [#"[òóôõöő]" "o"]
+   [#"[ùúûüű]" "u"]
+   [#"[ýŷÿ]" "y"]
+   [#"ñ" "n"]
+   [#"[çc]" "k"]
+   [#"ß" "s"]
+   [#" & " " and "]
+   [#"[-/]" " "]
+   [#"[^a-z0-9 ]" ""];;ojo con el espacio al final de [^a-z0-9 ]
+   [#"\s+" " "]])
+
+(def advanced-regex
+  [[#"ae" "a"]
+   [#"ai" "ei"]
+   [#"ay" "ei"]
+   [#"ey" "ei"]
+   [#"oe" "o"]
+   [#"ue" "u"]
+   [#"ie" "i"]
+   [#"sz" "s"]
+   [#"zs" "s"]
+   [#"sh" "s"]
+   [#"ck" "k"]
+   [#"cc" "k"]
+   [#"th" "t"]
+   [#"dt" "t"]
+   [#"ph" "f"]
+   [#"pf" "f"]
+   [#"ou" "o"]
+   [#"uo" "u"]])
+
+(def extra-regex
+  [[#"p" "b"]
+   [#"z" "s"]
+   [#"[cgq]" "k"]
+   [#"n" "m"]
+   [#"d" "t"]
+   [#"[vw]" "f"]
+   [#"[aeiouy]" ""]])
+
+(def balance-regex
+  [[#"[-/]" " "]
+   [#"[^a-z0-9 ]" ""]
+   [#"\s+" " "]])
+
+(defn collapse-repeating-chars [string]
+  (apply str (dedupe string)))
 
 (defn replace-regexes [^String str regexp]
   (reduce (fn [^String str [regex rep]]
@@ -43,22 +92,31 @@
     :advanced encoder-advanced
     encoder-icase))
 
-(defn encode-value [{:keys [encoder stemmer]} value]
+(defn encode-value [value {:keys [encoder stemmer]}]
   (when value
     (-> value
         encoder
         (replace-regexes stemmer))))
+#_(encode-value "Rationate" {:encoder :icase :stemmer [[#"ate" "ational"]]})
+(replace-regexes (encoder-icase "Rationate") [[#"ate" "ational"]])
+#_(defn encode-value [value {:keys [encoder stemmer]}]
+  (println value encoder stemmer)
+  (replace-regexes value stemmer))
 
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
-            (operation data (subs value n) id)) data (range (count value))))
+            (operation data (subs value n) id))
+          data
+          (range (count value))))
 
 (defn index-forward [data operation ^String value id]
   (reduce (fn [data n]
-            (operation data (subs value 0 n) id)) data (range 1 (inc (count value)))))
+            (operation data (subs value 0 n) id))
+          data
+          (range 1 (inc (count value)))))
 
 (defn index-both [data operation ^String value id]
   (index-forward (index-reverse data operation value id) operation value id))
@@ -141,23 +199,7 @@
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
-<<<<<<< HEAD
               flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
                                                                            ["TAL" "DOLBER"] ))]
           (get (:data flex) "abs")
           #_(flex-search flex "and jus"))))
-
-
-;;prueba de commit desde visualstudio
-=======
-              flex (reduce (fn [flex [k v]]
-                             (flex-add flex k v)) flex (map vector (range) sample-data/data))]
-          (flex-search flex "and jus"))))
->>>>>>> refs/remotes/galdolber/master
-
-
-prueba 2
-prueba 3 github escritorio
-agregado 4
-AGREGADO 5
-AGREGADO 6
