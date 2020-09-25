@@ -2,7 +2,7 @@
   (:gen-class)
   (:require [clojure.string :as string]
             [clojure.set :as sets]
-            #_[flexsearch.data :as sample-data]))
+            [flexsearch.data :as sample-data]))
 
 (set! *warn-on-reflection* true)
 
@@ -61,16 +61,20 @@
    [#"[^a-z0-9 ]" ""]
    [#"\s+" " "]])
 
-(defn collapse-repeating-chars [string]
-  (apply str (dedupe string)))
 
 (defn replace-regexes [^String str regexp]
-  (reduce (fn [^String str [regex rep]]
-            (if (keyword? regex)
-              (.replaceAll str (name regex) rep)
-              (string/replace str regex rep)))
-          str
-          regexp))
+(reduce (fn [^String str [regex rep]]
+          (if (keyword? regex)
+            (.replaceAll str (name regex) rep)
+            (string/replace str regex rep)))
+        str
+        regexp))
+
+
+
+
+(defn collapse-repeating-chars [string]
+  (apply str (dedupe string)))
 
 (defn encoder-icase [value]
   (string/lower-case value))
@@ -92,19 +96,22 @@
     :advanced encoder-advanced
     encoder-icase))
 
+
+
+
+
 (defn encode-value [value {:keys [encoder stemmer]}]
   (when value
     (-> value
         encoder
         (replace-regexes stemmer))))
-#_(encode-value "Rationate" {:encoder :icase :stemmer [[#"ate" "ational"]]})
-(replace-regexes (encoder-icase "Rationate") [[#"ate" "ational"]])
-#_(defn encode-value [value {:keys [encoder stemmer]}]
-  (println value encoder stemmer)
-  (replace-regexes value stemmer))
 
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
+
+
+
+
 
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
@@ -139,35 +146,64 @@
     :full index-full
     index-forward))
 
-(defn init [{:keys [tokenizer split indexer filter] :as options}]
-  (let [encoder (get-encoder (:encoder options))]
+
+
+
+
+
+
+(defn spliter [split]
+  (fn [x] (string/split x (or split #"\W+"))))
+
+(defn init [{:keys [tokenizer split indexer filter encoder] :as options}]
+  (let [encoder (get-encoder encoder)]
     (assoc (merge {:ids {} :data {}} options)
            :indexer (get-indexer indexer)
            :encoder encoder
            :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
            :filter (set (mapv encoder filter)))))
 
+(def flex (init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}))
+
+
+
+
+
 (defn add-index [data ^String value id]
   #_(assoc data value (conj (or (get data value) #{}) id))
   (update data value #(conj (or % #{}) id)))
 
 (defn remove-index [data ^String value id]
-  #_(assoc data value (disj (or (get data value) #{}) id))
-  (update data value #(disj (or % #{}) id)))
-
-(defn remove-indexes [flex indexer words id]
-  (assoc flex :data
-         (reduce (fn [data word]
-                   (indexer data remove-index word id)) (:data flex) words)))
+#_(assoc data value (disj (or (get data value) #{}) id))
+(update data value #(disj (or % #{}) id)))
 
 (defn add-indexes [flex indexer words id]
   (assoc flex :data
          (reduce (fn [data word]
-                   (indexer data add-index word id)) (:data flex) words)))
+                   (indexer data add-index word id))
+                 (:data flex)
+                 words)))
+
+(def f-johnny (add-indexes flex index-forward ["johnny" "alias" "deep"] 1))
+
+(defn remove-indexes [flex indexer words id]
+  (assoc flex :data
+         (reduce (fn [data word]
+                   (indexer data remove-index word id))
+                 (:data flex)
+                 words)))
+
+(remove-indexes f-johnny index-forward ["alias" "deep"] 1)
+;;lo que saca son los nros de aparicion, no los fragmentos
+
+
+
+
+
 
 (defn flex-add
   [{:keys [ids tokenizer indexer filter] :as flex} id content]
-  (let [content (encode-value flex content)
+  (let [content (encode-value content flex)
         words (tokenizer content)
         words (set (if filter (filter-words words filter) words))]
     (if-let [old-words (get ids id)]
@@ -181,6 +217,9 @@
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
 
+(def pedro-gonzales (flex-add flex 1 "Pedro Gonzales"))
+(def gonzales-garcia (flex-add pedro-gonzales 2 "Pedro Garcia"))
+
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
   (if-let [old-words (get ids id)]
     (-> flex
@@ -188,14 +227,22 @@
         (update :ids #(dissoc % id)))
     flex))
 
+
+(flex-remove pedro-gonzales 1)
+(flex-remove gonzales-garcia 2)
+
+
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when (and search data)
-    (let [search (encode-value flex search)
+    (let [search (encode-value search flex)
           words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
       ;; TODO? add threshold?
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
+
+(flex-search gonzales-garcia "lez")
+
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})

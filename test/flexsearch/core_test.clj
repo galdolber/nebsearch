@@ -1,6 +1,7 @@
 (ns flexsearch.core-test
   (:require [clojure.test :refer [deftest is]]
-            [flexsearch.core :as f]))
+            [flexsearch.core :as f]
+            [clojure.string :as string]))
 
 (deftest collapse-repeating-chars
   (is (string? (f/collapse-repeating-chars "")))
@@ -74,7 +75,7 @@
   #_(is (= (f/encoder-simple "Abc & á   /-ççSs83bc") "abk and a kkss83bk")))
 
 (deftest encoder-advanced
-  (is (string? (f/encoder-advanced "áAc")));;it used advanced regex inside
+  (is (string? (f/encoder-advanced "áAc")));;it used advanced-regex inside
   (is (= (f/encoder-advanced "áAc") "ac"))
   (is (= (f/encoder-advanced "áAc") "ac"))
   (is (= (f/encoder-advanced "áAc") "ac"))
@@ -106,20 +107,26 @@
   (is (= (f/get-encoder :advanced) f/encoder-advanced)))
 
 (deftest encode-value
-  (is (= (f/encode-value {:encoder :icase :stemmer [[#"ate" "ational"]]} "rationate") "ratiónational")))
+  (is (string? (f/encode-value "rationate" {:encoder (f/get-encoder :icase) :stemmer [[#"ate" "ational"]]})))
+  (is (= (f/encode-value "rationate" {:encoder (f/get-encoder :icase) :stemmer [[#"ate" "ational"]]}) "rationational")))
 
 (deftest filter-words
-  (is(=(f/filter-words ["the" "cat" "and" "the" "dog" "or" "the" "coco"] #{"and" "or"}) ["the" "cat" "the" "dog" "the" "coco"])))
+  (is (vector? (f/filter-words ["the" "cat" "and" "the" "dog" "or" "the" "coco"] #{"and" "or"})))
+  (is (= (f/filter-words ["the" "cat" "and" "the" "dog" "or" "the" "coco"] #{"and" "or"})
+         ["the" "cat" "the" "dog" "the" "coco"])));;it's ok filterer to be a set?
 
 (deftest index-reverse
+  (is (map? (f/index-reverse {} f/add-index "gato" 1)))
   (is (= (f/index-reverse {} f/add-index "gato" 1)
          {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}})))
 
 (deftest index-forward
+  (is(map? (f/index-forward {} f/add-index "gato" 1)))
   (is (= (f/index-forward {} f/add-index "gato" 1)
          {"g" #{1}, "ga" #{1}, "gat" #{1}, "gato" #{1}})))
 
 (deftest index-both
+  (is(map? (f/index-both {} f/add-index "gato" 1)))
   (is (= (f/index-both {} f/add-index "gato" 1)
          {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}, "g" #{1}, "ga" #{1}, "gat" #{1}})))
 
@@ -128,6 +135,7 @@
 (def gato+gatorade (f/index-full gato f/add-index "gatorade" 2))
 (def gato+gatorade-gato (f/index-full gato+gatorade f/remove-index "gato" 1))
 (deftest index-full
+  (is (map? gato))
   (is (= gato {"ato" #{1}, "gat" #{1}, "a" #{1}, "ga" #{1}, "t" #{1}, "g" #{1}, "gato" #{1}, "to" #{1}, "at" #{1}}))
   (is (= gatorade {"d" #{2}
                    "rad" #{2}
@@ -240,15 +248,108 @@
   (is (= (f/get-indexer :both) f/index-both))
   (is (= (f/get-indexer :full) f/index-full)))
 
+(deftest encode-value
+  (is (= (f/encode-value "Rationate" {:encoder (f/get-encoder :icase) :stemmer [[#"ate" "ational"]]})
+         "rationational")))
+
+
 (deftest init
-  (is (map (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})
-           {:ids {}
-            :data {}
-            :tokenizer f/init/fn--220970
-            :split #"\W+"
-            :indexer f/index-forward
-            :filter #{"or" "and"}
-            :encoder f/encoder-icase})));;no da por la funcion de tokenizer
+  (is (map? (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})))
+  (is (= ((:tokenizer (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})) "asd fjfg")
+         ["asd" "fjfg"]))
+  (is (= (string/split "asdsa sada" (:split (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})))
+         ["asdsa" "sada"]))
+  (is (= (dissoc (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}) :tokenizer :split)
+         {:ids {}
+          :data {}
+          :indexer f/index-forward
+          :filter #{"or" "and"}
+          :encoder f/encoder-icase})))
+
+(def flex (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}))
+
+(deftest add-index
+  (is(=(f/add-index {} "jorge" 1)
+      {"jorge" #{1}})))
+
+(def jorge (f/add-index {} "jorge" 1))
+
+(deftest remove-index
+  (is (= (f/remove-index jorge "jorge" 1)
+         {"jorge" #{}}))
+  (is (= (f/remove-index jorge "jorge" 2)
+         {"jorge" #{1}})))
+
+#_(deftest add-indexes
+  (is (= (f/add-indexes flex f/index-forward ["johnny" "deep"] 1)
+         {:ids {},
+          :data
+ {"d" #{1},
+  "dee" #{1},
+  "johnn" #{1},
+  "j" #{1},
+  "johnny" #{1},
+  "john" #{1},
+  "de" #{1},
+  "deep" #{1},
+  "joh" #{1},
+  "jo" #{1}},
+          :tokenizer f/init/fn--14976,
+          :split #"\W+",
+          :indexer f/index-forward,
+          :filter #{"or" "and"},
+          :encoder f/encoder-icase})));;no da por la funcion en tokenizer
+
+#_(deftest remove_indexes)
+
+#_(deftest flex-add
+  (is(=(f/flex-add flex 1 "Pedro Gonzales")
+      {:ids {1 #{"pedro" "gonzales"}},
+ :data
+ {"pedro" #{1},
+  "pe" #{1},
+  "ped" #{1},
+  "p" #{1},
+  "gonz" #{1},
+  "gonzale" #{1},
+  "gonzal" #{1},
+  "go" #{1},
+  "pedr" #{1},
+  "g" #{1},
+  "gonzales" #{1},
+  "gon" #{1},
+  "gonza" #{1}},
+ :tokenizer #function[flexsearch.core/init/fn--104437],
+ :split #"\W+",
+ :indexer #function[flexsearch.core/index-forward],
+ :filter #{"or" "and"},
+ :encoder #function[flexsearch.core/encoder-icase]})))
+
+(def pedro-gonzales (f/flex-add flex 1 "Pedro Gonzales"))
+
+#_(deftest flex-remove
+  (is(=(f/flex-remove pedro-gonzales 1)
+      {:ids {},
+ :data
+ {"pedro" #{},
+  "pe" #{},
+  "ped" #{},
+  "p" #{},
+  "gonz" #{},
+  "gonzale" #{},
+  "gonzal" #{},
+  "go" #{},
+  "pedr" #{},
+  "g" #{},
+  "gonzales" #{},
+  "gon" #{},
+  "gonza" #{}},
+ :tokenizer #function[flexsearch.core/init/fn--104437],
+ :split #"\W+",
+ :indexer #function[flexsearch.core/index-forward],
+ :filter #{"or" "and"},
+ :encoder #function[flexsearch.core/encoder-icase]})))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;ADD-INIT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 #_(deftest create-page
