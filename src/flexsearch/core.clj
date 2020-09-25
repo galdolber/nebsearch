@@ -2,7 +2,7 @@
   (:gen-class)
   (:require [clojure.string :as string]
             [clojure.set :as sets]
-            [flexsearch.data :as sample-data]))
+            #_[flexsearch.data :as sample-data]))
 
 (set! *warn-on-reflection* true)
 
@@ -92,30 +92,31 @@
     :advanced encoder-advanced
     encoder-icase))
 
-(defn encode-value [{:keys [encoder stemmer]} value]
+(defn encode-value [value {:keys [encoder stemmer]}]
   (when value
     (-> value
         encoder
         (replace-regexes stemmer))))
-
-#_(encode-value {:encoder :icase :stemmer [[#"ate" "ational"]]} "Rationate")
-
-#_(when "Rationate"
- (-> "Rationate"
-     encoder-icase
-     (replace-regexes [[#"ate" "ational"]])))
-
+#_(encode-value "Rationate" {:encoder :icase :stemmer [[#"ate" "ational"]]})
+(replace-regexes (encoder-icase "Rationate") [[#"ate" "ational"]])
+#_(defn encode-value [value {:keys [encoder stemmer]}]
+  (println value encoder stemmer)
+  (replace-regexes value stemmer))
 
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
 (defn index-reverse [data operation ^String value id]
   (reduce (fn [data n]
-            (operation data (subs value n) id)) data (range (count value))))
+            (operation data (subs value n) id))
+          data
+          (range (count value))))
 
 (defn index-forward [data operation ^String value id]
   (reduce (fn [data n]
-            (operation data (subs value 0 n) id)) data (range 1 (inc (count value)))))
+            (operation data (subs value 0 n) id))
+          data
+          (range 1 (inc (count value)))))
 
 (defn index-both [data operation ^String value id]
   (index-forward (index-reverse data operation value id) operation value id))

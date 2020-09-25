@@ -108,6 +108,147 @@
 (deftest encode-value
   (is (= (f/encode-value {:encoder :icase :stemmer [[#"ate" "ational"]]} "rationate") "ratiónational")))
 
+(deftest filter-words
+  (is(=(f/filter-words ["the" "cat" "and" "the" "dog" "or" "the" "coco"] #{"and" "or"}) ["the" "cat" "the" "dog" "the" "coco"])))
+
+(deftest index-reverse
+  (is (= (f/index-reverse {} f/add-index "gato" 1)
+         {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}})))
+
+(deftest index-forward
+  (is (= (f/index-forward {} f/add-index "gato" 1)
+         {"g" #{1}, "ga" #{1}, "gat" #{1}, "gato" #{1}})))
+
+(deftest index-both
+  (is (= (f/index-both {} f/add-index "gato" 1)
+         {"gato" #{1}, "ato" #{1}, "to" #{1}, "o" #{1}, "g" #{1}, "ga" #{1}, "gat" #{1}})))
+
+(def gato (f/index-full {} f/add-index "gato" 1))
+(def gatorade (f/index-full {} f/add-index "gatorade" 2))
+(def gato+gatorade (f/index-full gato f/add-index "gatorade" 2))
+(def gato+gatorade-gato (f/index-full gato+gatorade f/remove-index "gato" 1))
+(deftest index-full
+  (is (= gato {"ato" #{1}, "gat" #{1}, "a" #{1}, "ga" #{1}, "t" #{1}, "g" #{1}, "gato" #{1}, "to" #{1}, "at" #{1}}))
+  (is (= gatorade {"d" #{2}
+                   "rad" #{2}
+                   "orade" #{2}
+                   "tora" #{2}
+                   "ad" #{2}
+                   "ato" #{2}
+                   "tor" #{2}
+                   "atorad" #{2}
+                   "gatora" #{2}
+                   "gat" #{2}
+                   "atora" #{2}
+                   "atorade" #{2}
+                   "gator" #{2}
+                   "rade" #{2}
+                   "ora" #{2}
+                   "or" #{2}
+                   "de" #{2}
+                   "a" #{2}
+                   "ga" #{2}
+                   "gatorad" #{2}
+                   "gatorade" #{2}
+                   "t" #{2}
+                   "ator" #{2}
+                   "r" #{2}
+                   "torade" #{2}
+                   "ra" #{2}
+                   "g" #{2}
+                   "torad" #{2}
+                   "gato" #{2}
+                   "orad" #{2}
+                   "to" #{2}
+                   "at" #{2}
+                   "o" #{2}
+                   "ade" #{2}}))
+  (is (= gato+gatorade {"d" #{2}
+                        "rad" #{2}
+                        "orade" #{2}
+                        "tora" #{2}
+                        "ad" #{2}
+                        "ato" #{1 2}
+                        "tor" #{2}
+                        "atorad" #{2}
+                        "gatora" #{2}
+                        "gat" #{1 2}
+                        "atora" #{2}
+                        "atorade" #{2}
+                        "gator" #{2}
+                        "rade" #{2}
+                        "ora" #{2}
+                        "or" #{2}
+                        "de" #{2}
+                        "a" #{1 2}
+                        "ga" #{1 2}
+                        "gatorad" #{2}
+                        "gatorade" #{2}
+                        "t" #{1 2}
+                        "ator" #{2}
+                        "r" #{2}
+                        "torade" #{2}
+                        "ra" #{2}
+                        "g" #{1 2}
+                        "torad" #{2}
+                        "gato" #{1 2}
+                        "orad" #{2}
+                        "to" #{1 2}
+                        "at" #{1 2}
+                        "o" #{2}
+                        "ade" #{2}}))
+(is(= gato+gatorade-gato {"d" #{2}
+                          "rad" #{2}
+                          "orade" #{2}
+                          "tora" #{2}
+                          "ad" #{2}
+                          "ato" #{2}
+                          "tor" #{2}
+                          "atorad" #{2}
+                          "gatora" #{2}
+                          "gat" #{2}
+                          "atora" #{2}
+                          "atorade" #{2}
+                          "gator" #{2}
+                          "rade" #{2}
+                          "ora" #{2}
+                          "or" #{2}
+                          "de" #{2}
+                          "a" #{2}
+                          "ga" #{2}
+                          "gatorad" #{2}
+                          "gatorade" #{2}
+                          "t" #{2}
+                          "ator" #{2}
+                          "r" #{2}
+                          "torade" #{2}
+                          "ra" #{2}
+                          "g" #{2}
+                          "torad" #{2}
+                          "gato" #{2}
+                          "orad" #{2}
+                          "to" #{2}
+                          "at" #{2}
+                          "o" #{2}
+                          "ade" #{2}})))
+
+(deftest get-indexer
+  (is (fn? (f/get-indexer nil)))
+  (is (= (f/get-indexer nil) f/index-forward))
+  (is (= (f/get-indexer :forward) f/index-forward))
+  (is (= (f/get-indexer :reverse) f/index-reverse))
+  (is (= (f/get-indexer :both) f/index-both))
+  (is (= (f/get-indexer :full) f/index-full)))
+
+(deftest init
+  (is (map (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}})
+           {:ids {}
+            :data {}
+            :tokenizer f/init/fn--220970
+            :split #"\W+"
+            :indexer f/index-forward
+            :filter #{"or" "and"}
+            :encoder f/encoder-icase})));;no da por la funcion de tokenizer
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;ADD-INIT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 #_(deftest create-page
