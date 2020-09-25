@@ -265,13 +265,11 @@
           :indexer f/index-forward
           :filter #{"or" "and"}
           :encoder f/encoder-icase})))
-
 (def flex (f/init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}))
 
 (deftest add-index
-  (is(=(f/add-index {} "jorge" 1)
-      {"jorge" #{1}})))
-
+  (is (= (f/add-index {} "jorge" 1)
+         {"jorge" #{1}})))
 (def jorge (f/add-index {} "jorge" 1))
 
 (deftest remove-index
@@ -280,75 +278,128 @@
   (is (= (f/remove-index jorge "jorge" 2)
          {"jorge" #{1}})))
 
-#_(deftest add-indexes
-  (is (= (f/add-indexes flex f/index-forward ["johnny" "deep"] 1)
-         {:ids {},
+(deftest add-indexes
+  (is (= (dissoc (f/add-indexes flex f/index-forward ["johnny" "alias" "deep"] 1) :tokenizer :split)
+         {:ids {}
           :data
- {"d" #{1},
-  "dee" #{1},
-  "johnn" #{1},
-  "j" #{1},
-  "johnny" #{1},
-  "john" #{1},
-  "de" #{1},
-  "deep" #{1},
-  "joh" #{1},
-  "jo" #{1}},
-          :tokenizer f/init/fn--14976,
-          :split #"\W+",
-          :indexer f/index-forward,
-          :filter #{"or" "and"},
-          :encoder f/encoder-icase})));;no da por la funcion en tokenizer
+          {"d" #{1}
+           "al" #{1}
+           "dee" #{1}
+           "johnn" #{1}
+           "j" #{1}
+           "johnny" #{1}
+           "john" #{1}
+           "de" #{1}
+           "a" #{1}
+           "deep" #{1}
+           "alia" #{1}
+           "alias" #{1}
+           "joh" #{1}
+           "ali" #{1}
+           "jo" #{1}}
+          :indexer f/index-forward
+          :filter #{"or" "and"}
+          :encoder f/encoder-icase})))
+(def f-johnny (f/add-indexes flex f/index-forward ["johnny" "alias" "deep"] 1))
 
-#_(deftest remove_indexes)
+(deftest remove_indexes
+  (is(= (dissoc (f/remove-indexes f-johnny f/index-forward ["alias" "deep"] 1) :tokenizer :split)
+        {:ids {}
+         :data
+         {"d" #{}
+          "al" #{}
+          "dee" #{}
+          "johnn" #{1}
+          "j" #{1}
+          "johnny" #{1}
+          "john" #{1}
+          "de" #{}
+          "a" #{}
+          "deep" #{}
+          "alia" #{}
+          "alias" #{}
+          "joh" #{1}
+          "ali" #{}
+          "jo" #{1}}
+         :indexer f/index-forward
+         :filter #{"or" "and"}
+         :encoder f/encoder-icase})))
 
-#_(deftest flex-add
-  (is(=(f/flex-add flex 1 "Pedro Gonzales")
-      {:ids {1 #{"pedro" "gonzales"}},
- :data
- {"pedro" #{1},
-  "pe" #{1},
-  "ped" #{1},
-  "p" #{1},
-  "gonz" #{1},
-  "gonzale" #{1},
-  "gonzal" #{1},
-  "go" #{1},
-  "pedr" #{1},
-  "g" #{1},
-  "gonzales" #{1},
-  "gon" #{1},
-  "gonza" #{1}},
- :tokenizer #function[flexsearch.core/init/fn--104437],
- :split #"\W+",
- :indexer #function[flexsearch.core/index-forward],
- :filter #{"or" "and"},
- :encoder #function[flexsearch.core/encoder-icase]})))
+(deftest flex-add
+  (is (= (dissoc (f/flex-add flex 1 "Pedro Gonzales") :tokenizer :split)
+         {:ids {1 #{"pedro" "gonzales"}}
+          :data
+          {"pedro" #{1}
+           "pe" #{1}
+           "ped" #{1}
+           "p" #{1}
+           "gonz" #{1}
+           "gonzale" #{1}
+           "gonzal" #{1}
+           "go" #{1}
+           "pedr" #{1}
+           "g" #{1}
+           "gonzales" #{1}
+           "gon" #{1}
+           "gonza" #{1}}
+          :indexer f/index-forward
+          :filter #{"or" "and"}
+          :encoder f/encoder-icase})))
 
 (def pedro-gonzales (f/flex-add flex 1 "Pedro Gonzales"))
+(def gonzales+garcia (f/flex-add pedro-gonzales 2 "Pedro Garcia"))
 
-#_(deftest flex-remove
-  (is(=(f/flex-remove pedro-gonzales 1)
-      {:ids {},
- :data
- {"pedro" #{},
-  "pe" #{},
-  "ped" #{},
-  "p" #{},
-  "gonz" #{},
-  "gonzale" #{},
-  "gonzal" #{},
-  "go" #{},
-  "pedr" #{},
-  "g" #{},
-  "gonzales" #{},
-  "gon" #{},
-  "gonza" #{}},
- :tokenizer #function[flexsearch.core/init/fn--104437],
- :split #"\W+",
- :indexer #function[flexsearch.core/index-forward],
- :filter #{"or" "and"},
- :encoder #function[flexsearch.core/encoder-icase]})))
+(deftest flex-remove
+  (is (= (dissoc (f/flex-remove pedro-gonzales 1) :tokenizer :split)
+         {:ids {}
+          :data
+          {"pedro" #{}
+           "pe" #{}
+           "ped" #{}
+           "p" #{}
+           "gonz" #{}
+           "gonzale" #{}
+           "gonzal" #{}
+           "go" #{}
+           "pedr" #{}
+           "g" #{}
+           "gonzales" #{}
+           "gon" #{}
+           "gonza" #{}}
+          :indexer f/index-forward
+                    :filter #{"or" "and"}
+          :encoder f/encoder-icase}))
+  (is (= (dissoc (f/flex-remove gonzales+garcia 2) :tokenizer :split)
+         {:ids {1 #{"pedro" "gonzales"}}
+          :data
+          {"pedro" #{1}
+           "garci" #{}
+           "pe" #{1}
+           "ped" #{1}
+           "p" #{1}
+           "gonz" #{1}
+           "gonzale" #{1}
+           "gonzal" #{1}
+           "garcia" #{}
+           "gar" #{}
+           "go" #{1}
+           "ga" #{}
+           "pedr" #{1}
+           "g" #{1}
+           "garc" #{}
+           "gonzales" #{1}
+           "gon" #{1}
+           "gonza" #{1}}
+          :indexer f/index-forward
+          :filter #{"or" "and"}
+          :encoder f/encoder-icase})))
+
+(deftest flex-search
+  (is (= (f/flex-search gonzales+garcia "gonz") #{1}))
+  (is (= (f/flex-search gonzales+garcia "ga") #{2}))
+  (is (= (f/flex-search gonzales+garcia "pedro") #{1 2}))
+  (is (= (f/flex-search gonzales+garcia "nz") nil)))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;ADD-INIT;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

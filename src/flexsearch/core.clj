@@ -151,10 +151,6 @@
 
 
 
-
-(defn spliter [split]
-  (fn [x] (string/split x (or split #"\W+"))))
-
 (defn init [{:keys [tokenizer split indexer filter encoder] :as options}]
   (let [encoder (get-encoder encoder)]
     (assoc (merge {:ids {} :data {}} options)
@@ -162,7 +158,6 @@
            :encoder encoder
            :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
            :filter (set (mapv encoder filter)))))
-
 (def flex (init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}))
 
 
@@ -183,7 +178,6 @@
                    (indexer data add-index word id))
                  (:data flex)
                  words)))
-
 (def f-johnny (add-indexes flex index-forward ["johnny" "alias" "deep"] 1))
 
 (defn remove-indexes [flex indexer words id]
@@ -192,10 +186,8 @@
                    (indexer data remove-index word id))
                  (:data flex)
                  words)))
-
-(remove-indexes f-johnny index-forward ["alias" "deep"] 1)
+(dissoc (remove-indexes f-johnny index-forward ["alias" "deep"] 1) :tokenizer :split)
 ;;lo que saca son los nros de aparicion, no los fragmentos
-
 
 
 
@@ -216,9 +208,13 @@
       (-> flex
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
-
 (def pedro-gonzales (flex-add flex 1 "Pedro Gonzales"))
-(def gonzales-garcia (flex-add pedro-gonzales 2 "Pedro Garcia"))
+(def gonzales+garcia (flex-add pedro-gonzales 2 "Pedro Garcia"))
+(flex-add pedro-gonzales 1 "alias ines")
+
+
+
+
 
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
   (if-let [old-words (get ids id)]
@@ -226,11 +222,6 @@
         (remove-indexes indexer old-words id)
         (update :ids #(dissoc % id)))
     flex))
-
-
-(flex-remove pedro-gonzales 1)
-(flex-remove gonzales-garcia 2)
-
 
 (defn flex-search [{:keys [data tokenizer filter] :as flex} search]
   (when (and search data)
@@ -241,7 +232,8 @@
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
 
-(flex-search gonzales-garcia "lez")
+(flex-search gonzales+garcia "gonz")
+
 
 
 (comment
