@@ -26772,3 +26772,7 @@
   "Zotz!",
   "Zyzzyx Road"
 ])
+
+(def data2 ["$ aka Dollars"
+            "$1,000 a Touchdown"
+            "$10 Raise"])

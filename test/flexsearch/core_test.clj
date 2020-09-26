@@ -136,13 +136,23 @@
 (def gato+gatorade-gato (f/index-full gato+gatorade f/remove-index "gato" 1))
 (deftest index-full
   (is (map? gato))
-  (is (= gato {"ato" #{1}, "gat" #{1}, "a" #{1}, "ga" #{1}, "t" #{1}, "g" #{1}, "gato" #{1}, "to" #{1}, "at" #{1}}))
+  (is (= gato {"ato" #{1}
+               "gat" #{1}
+               "a" #{1}
+               "ga" #{1}
+               "t" #{1}
+               "g" #{1}
+               "gato" #{1}
+               "to" #{1}
+               "at" #{1}
+               "o" #{1}}))
   (is (= gatorade {"d" #{2}
                    "rad" #{2}
                    "orade" #{2}
                    "tora" #{2}
                    "ad" #{2}
                    "ato" #{2}
+                   "e" #{2}
                    "tor" #{2}
                    "atorad" #{2}
                    "gatora" #{2}
@@ -177,6 +187,7 @@
                         "tora" #{2}
                         "ad" #{2}
                         "ato" #{1 2}
+                        "e" #{2}
                         "tor" #{2}
                         "atorad" #{2}
                         "gatora" #{2}
@@ -203,7 +214,7 @@
                         "orad" #{2}
                         "to" #{1 2}
                         "at" #{1 2}
-                        "o" #{2}
+                        "o" #{1 2}
                         "ade" #{2}}))
 (is(= gato+gatorade-gato {"d" #{2}
                           "rad" #{2}
@@ -211,6 +222,7 @@
                           "tora" #{2}
                           "ad" #{2}
                           "ato" #{2}
+                          "e" #{2}
                           "tor" #{2}
                           "atorad" #{2}
                           "gatora" #{2}
@@ -325,6 +337,9 @@
          :filter #{"or" "and"}
          :encoder f/encoder-icase})))
 
+(def pedro-gonzales (f/flex-add flex 1 "Pedro Gonzales"))
+(def gonzales+garcia (f/flex-add pedro-gonzales 2 "Pedro Garcia"))
+
 (deftest flex-add
   (is (= (dissoc (f/flex-add flex 1 "Pedro Gonzales") :tokenizer :split)
          {:ids {1 #{"pedro" "gonzales"}}
@@ -344,10 +359,36 @@
            "gonza" #{1}}
           :indexer f/index-forward
           :filter #{"or" "and"}
+          :encoder f/encoder-icase}))
+  (is (= (dissoc (f/flex-add pedro-gonzales 1 "alias rambo") :tokenizer :split)
+         {:ids {1 #{"rambo" "alias"}}
+          :data
+          {"pedro" #{}
+           "al" #{1}
+           "pe" #{}
+           "ped" #{}
+           "p" #{}
+           "gonz" #{}
+           "gonzale" #{}
+           "gonzal" #{}
+           "go" #{}
+           "a" #{1}
+           "pedr" #{}
+           "r" #{1}
+           "ra" #{1}
+           "g" #{}
+           "alia" #{1}
+           "rambo" #{1}
+           "alias" #{1}
+           "ali" #{1}
+           "gonzales" #{}
+           "gon" #{}
+           "gonza" #{}
+           "ramb" #{1}
+           "ram" #{1}}
+          :indexer f/index-forward
+          :filter #{"or" "and"}
           :encoder f/encoder-icase})))
-
-(def pedro-gonzales (f/flex-add flex 1 "Pedro Gonzales"))
-(def gonzales+garcia (f/flex-add pedro-gonzales 2 "Pedro Garcia"))
 
 (deftest flex-remove
   (is (= (dissoc (f/flex-remove pedro-gonzales 1) :tokenizer :split)

@@ -2,7 +2,7 @@
   (:gen-class)
   (:require [clojure.string :as string]
             [clojure.set :as sets]
-            [flexsearch.data :as sample-data]))
+            [flexsearch.data :as fd]))
 
 (set! *warn-on-reflection* true)
 
@@ -136,7 +136,12 @@
                  (operation data (subs value 0 n) id)) data
                (range 1 (inc (count value))))))
    data
-   (range (dec (count value)))))
+   (range (count value))))
+
+(subs "a" 0)
+(range 0)
+(index-full {} add-index "a" 1)
+
 
 (defn get-indexer [indexing]
   (case indexing
@@ -155,13 +160,13 @@
   (let [encoder (get-encoder encoder)]
     (assoc (merge {:ids {} :data {}} options)
            :indexer (get-indexer indexer)
-           :encoder encoder
+           :encoder (get-encoder encoder)
            :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
            :filter (set (mapv encoder filter)))))
-(def flex (init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"}}))
-
-
-
+(def flex-f (init {:tokenizer false :split #"\W+" :indexer :forward :filter #{"and" "or"} :encoder :advanced}))
+(def flex-r (init {:tokenizer false :split #"\W+" :indexer :reverse :filter #{"and" "or"} :encoder :advanced}))
+(def flex-b (init {:tokenizer false :split #"\W+" :indexer :both :filter #{"and" "or"} :encoder :advanced}))
+(def flex-l (init {:tokenizer false :split #"\W+" :indexer :full :filter #{"and" "or"} :encoder :advanced}))
 
 
 (defn add-index [data ^String value id]
@@ -178,7 +183,7 @@
                    (indexer data add-index word id))
                  (:data flex)
                  words)))
-(def f-johnny (add-indexes flex index-forward ["johnny" "alias" "deep"] 1))
+(def f-johnny (add-indexes flex-f index-forward ["johnny" "alias" "deep"] 1))
 
 (defn remove-indexes [flex indexer words id]
   (assoc flex :data
@@ -186,9 +191,14 @@
                    (indexer data remove-index word id))
                  (:data flex)
                  words)))
-(dissoc (remove-indexes f-johnny index-forward ["alias" "deep"] 1) :tokenizer :split)
-;;lo que saca son los nros de aparicion, no los fragmentos
 
+
+
+
+
+(def words (set (#(string/split %  #"\W+") (encode-value "$1,000 a Touchdown" flex-l))))
+#{"" "touchdown" "a" "1" "0"}
+(add-indexes flex-l index-full words 1)
 
 
 
@@ -208,12 +218,8 @@
       (-> flex
           (add-indexes indexer words id)
           (assoc-in [:ids id] words)))))
-(def pedro-gonzales (flex-add flex 1 "Pedro Gonzales"))
+(def pedro-gonzales (flex-add flex-f 1 "Pedro Gonzales"))
 (def gonzales+garcia (flex-add pedro-gonzales 2 "Pedro Garcia"))
-(flex-add pedro-gonzales 1 "alias ines")
-
-
-
 
 
 (defn flex-remove [{:keys [ids indexer] :as flex} id]
@@ -232,9 +238,6 @@
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
 
-(flex-search gonzales+garcia "gonz")
-
-
 
 (comment
   (time (let [flex (init {:indexer :full :encoder :advanced})
@@ -242,3 +245,23 @@
                                                                            ["TAL" "DOLBER"] ))]
           (get (:data flex) "abs")
           #_(flex-search flex "and jus"))))
+
+
+
+
+
+
+
+(def data2 ["$1,000 a Touchdown"])
+;;ojo que daba ["1" #{2}]
+
+(def pares (map vector (range (count fd/data)) fd/data))
+(def corto (map vector (range (count data2)) data2))
+
+(defn ffaa [flex [nro film]]
+  (flex-add flex nro film))
+
+(prn(sort (:data (time (reduce ffaa flex-l corto)))))
+
+
+(["0" #{0}] ["00" #{0}] ["000" #{0}] ["c" #{0}] ["ch" #{0}] ["chd" #{0}] ["chdo" #{0}] ["chdow" #{0}] ["chdown" #{0}] ["d" #{0}] ["do" #{0}] ["dow" #{0}] ["down" #{0}] ["h" #{0}] ["hd" #{0}] ["hdo" #{0}] ["hdow" #{0}] ["hdown" #{0}] ["o" #{0}] ["ou" #{0}] ["ouc" #{0}] ["ouch" #{0}] ["ouchd" #{0}] ["ouchdo" #{0}] ["ouchdow" #{0}] ["ouchdown" #{0}] ["ow" #{0}] ["own" #{0}] ["t" #{0}] ["to" #{0}] ["tou" #{0}] ["touc" #{0}] ["touch" #{0}] ["touchd" #{0}] ["touchdo" #{0}] ["touchdow" #{0}] ["touchdown" #{0}] ["u" #{0}] ["uc" #{0}] ["uch" #{0}] ["uchd" #{0}] ["uchdo" #{0}] ["uchdow" #{0}] ["uchdown" #{0}] ["w" #{0}] ["wn" #{0}])
