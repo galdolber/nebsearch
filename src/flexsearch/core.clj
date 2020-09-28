@@ -141,11 +141,12 @@
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
 
-(def sample-data (read-string (slurp "data.edn")))
-
 (defn -main [& args]
-  (println (read-line))
-  (time (let [flex (init {:indexer :full :encoder :advanced})
-              flex (reduce (fn [flex [k v]]
-                             (flex-add flex k v)) flex (map vector (range) sample-data))]
-          (flex-search flex "and jus"))))
+  (let [sample-data (read-string (slurp "data.edn"))
+        _ (read-line)
+        flex (init {:indexer :full :encoder :advanced})
+        flex (time (reduce (fn [flex [k v]]
+                             (flex-add flex k v)) flex (map vector (range) sample-data)))]
+    (time (flex-search flex "and jus"))
+    (time (flex-search flex "and jus"))
+    (read-line)))
