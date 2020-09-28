@@ -139,25 +139,9 @@
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
 
-(comment
+(defn -main [& args]
+  (println (read-line))
   (time (let [flex (init {:indexer :full :encoder :advanced})
-<<<<<<< HEAD
-              flex (reduce (fn [flex [k v]] (flex-add flex k v)) flex (map vector (range) #_data
-                                                                           ["TAL" "DOLBER"] ))]
-          (get (:data flex) "abs")
-          #_(flex-search flex "and jus"))))
-
-
-;;prueba de commit desde visualstudio
-=======
               flex (reduce (fn [flex [k v]]
-                             (flex-add flex k v)) flex (map vector (range) sample-data/data))]
+                             (flex-add flex k v)) flex (map vector (range) sample-data))]
           (flex-search flex "and jus"))))
->>>>>>> refs/remotes/galdolber/master
-
-
-prueba 2
-prueba 3 github escritorio
-agregado 4
-AGREGADO 5
-AGREGADO 6
