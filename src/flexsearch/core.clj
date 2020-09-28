@@ -1,8 +1,7 @@
 (ns flexsearch.core
   (:gen-class)
   (:require [clojure.string :as string]
-            [clojure.set :as sets]
-            [flexsearch.data :as sample-data]))
+            [clojure.set :as sets]))
 
 (set! *warn-on-reflection* true)
 
