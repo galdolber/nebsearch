@@ -51,38 +51,38 @@
 (defn filter-words [words filterer]
   (vec (remove filterer words)))
 
-(defn index-reverse [^String value]
+(defn index-reverse [data ^String value]
   (let [len (count value)]
     (loop [i 0
-           r (transient [])]
+           r data]
       (if (= len i)
-        (persistent! r)
+        r
         (recur (inc i) (conj! r (.substring value i)))))))
 
-(defn index-forward [^String value]
+(defn index-forward [data ^String value]
   (let [len (inc (count value))]
     (loop [i 1
-           r (transient [])]
+           r data]
       (if (= len i)
-        (persistent! r)
+        r
         (recur (inc i) (conj! r (.substring value 0 i)))))))
 
-(defn index-both [^String value]
+(defn index-both [data ^String value]
   (let [len (inc (count value))]
     (loop [i 1
-           r (transient [])]
+           r data]
       (if (= len i)
-        (persistent! r)
+        r
         (recur (inc i) (conj! (conj! r (.substring value 0 i)) (.substring value (dec i))))))))
 
-(defn index-full [^String value]
+(defn index-full [data ^String value]
   (let [len (count value)
         llen (dec len)]
     (loop [i 0
            j 1
-           r (transient [])]
+           r data]
       (if (and (= llen i) (= len j))
-        (persistent! r)
+        r
         (let [r (conj! r (.substring value i j))]
           (if (= len j)
             (recur (inc i) (+ i 2) r)
@@ -112,7 +112,7 @@
   (let [content (encoder content)
         words (tokenizer content)
         words (if filter (filter-words words filter) words)
-        words (set (mapcat indexer words))]
+        words (persistent! (reduce indexer (transient #{}) words))]
     (assoc-in flex [:ids id] words)))
 
 (defn flex-remove [flex id]
@@ -131,25 +131,22 @@
       #_(apply sets/intersection (mapv data words)))))
 
 (defn -main [& args]
-  (let [dd (map vector (range) (read-string (slurp "data.edn")))
-        flex (time (reduce (fn [flex [k v]]
-                             (flex-add flex k v))
-                           (init {:indexer :full :encoder :simple})
-                           dd))]
+  (let [data (map vector (range) (read-string (slurp "data.edn")))
+        _ (read-line)
+        flex
+        (time (reduce (fn [flex [k v]]
+                        (flex-add flex k v))
+                      (init {:indexer :full :encoder :simple})
+                      data))]
+    (read-line)
     (time (flex-search flex "Things I Hate About"))
     (time (flex-search flex "Things I Hate About"))
-  #_(clojure.pprint/pprint (:ids flex)))
-  #_(time (let [flex (init {:indexer :full :encoder :advanced})
-              flex (reduce (fn [flex [k v]]
-                             (flex-add flex k v)) flex (map vector sample-data #_(range) sample-data))]
-            (time (flex-search flex "midnig boston")))))
+    (read-line)))
 
-
-#_(let [dd (map vector (range) #_(take 10000) sample-data)
-      flex (time
-            (reduce (fn [flex [k v]]
-                      (flex-add flex k v))
-                    (init {:indexer :full :encoder :simple})
-                    dd))]
+#_(def dd (map vector (range) (read-string (slurp "data.edn"))))
+#_(let [flex (time (reduce (fn [flex [k v]]
+                           (flex-add flex k v))
+                         (init {:indexer :forward :encoder :simple})
+                         dd))]
   (time (flex-search flex "Things I Hate About"))
-  #_(clojure.pprint/pprint (:ids flex)))
+  (time (flex-search flex "Things I Hate About")))
