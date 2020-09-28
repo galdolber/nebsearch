@@ -142,6 +142,8 @@
       #_(reduce into #{} (mapv data words))
       (apply sets/intersection (mapv data words)))))
 
+(def sample-data (read-string (slurp "data.edn")))
+
 (defn -main [& args]
   (println (read-line))
   (time (let [flex (init {:indexer :full :encoder :advanced})
