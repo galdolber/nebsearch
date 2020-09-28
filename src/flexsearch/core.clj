@@ -22,15 +22,15 @@
           str
           regexp))
 
-(defn encoder-icase [value]
+(defn encoder-icase [^String value]
   (string/lower-case value))
 
-(defn encoder-simple [value]
+(defn encoder-simple [^String value]
   (when value
     (let [s (normalize (string/lower-case value))]
       (if (string/blank? s) "" s))))
 
-(defn encoder-advanced [string]
+(defn encoder-advanced [^String string]
   (when string
     (let [string (encoder-simple string)]
       (collapse-repeating-chars string))))
@@ -42,7 +42,7 @@
     :advanced encoder-advanced
     encoder-icase))
 
-(defn encode-value [{:keys [encoder stemmer]} value]
+#_(defn encode-value [{:keys [encoder stemmer]} value]
   (when value
     (-> value
         encoder
@@ -54,7 +54,7 @@
 (defn index-reverse [^String value]
   (let [len (count value)]
     (loop [i 0
-           r (transient #{})]
+           r (transient [])]
       (if (= len i)
         (persistent! r)
         (recur (inc i) (conj! r (.substring value i)))))))
@@ -101,41 +101,55 @@
 
 (defn init [{:keys [tokenizer indexer filter] :as options}]
   (let [encoder (get-encoder (:encoder options))]
-    (assoc (merge {:ids {} :data {}} options)
+    (assoc (merge {:ids {}} options)
            :indexer (get-indexer indexer)
            :encoder encoder
            :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
-           :filter (set (mapv encoder filter)))))
+           :filter (when-not (empty? filter) (set (mapv encoder filter))))))
 
 (defn flex-add
-  [{:keys [tokenizer indexer filter] :as flex} id content]
-  (let [content (encode-value flex content)
+  [{:keys [tokenizer indexer encoder filter] :as flex} id content]
+  (let [content (encoder content)
         words (tokenizer content)
-        words (set (if filter (filter-words words filter) words))
+        words (if filter (filter-words words filter) words)
         words (set (mapcat indexer words))]
     (assoc-in flex [:ids id] words)))
 
 (defn flex-remove [flex id]
   (update flex :ids #(dissoc % id)))
 
-(defn flex-search [{:keys [ids tokenizer] :as flex} search]
+(defn flex-search [{:keys [ids tokenizer encoder] :as flex} search]
   (when (and search ids)
-    (let [search (encode-value flex search)
+    (let [search (encoder search)
           words (tokenizer search)
           words (set (if-let [f (:filter flex)] (filter-words words f) words))]
       ;; TODO? add threshold?
-      #_(reduce into #{} (mapv data words))
       (set
        (mapv first
              (filter (fn [[_ tokens]]
-                       (sets/superset? tokens words)) ids)))
+                       (sets/superset? (set tokens) words)) ids)))
       #_(apply sets/intersection (mapv data words)))))
 
-(def sample-data (read-string (slurp "data.edn")))
-
 (defn -main [& args]
-  (println (read-line))
-  (time (let [flex (init {:indexer :full :encoder :advanced})
+  (let [dd (map vector (range) (read-string (slurp "data.edn")))
+        flex (time (reduce (fn [flex [k v]]
+                             (flex-add flex k v))
+                           (init {:indexer :full :encoder :simple})
+                           dd))]
+    (time (flex-search flex "Things I Hate About"))
+    (time (flex-search flex "Things I Hate About"))
+  #_(clojure.pprint/pprint (:ids flex)))
+  #_(time (let [flex (init {:indexer :full :encoder :advanced})
               flex (reduce (fn [flex [k v]]
                              (flex-add flex k v)) flex (map vector sample-data #_(range) sample-data))]
-        (time (flex-search flex "midnig boston")))))
+            (time (flex-search flex "midnig boston")))))
+
+
+#_(let [dd (map vector (range) #_(take 10000) sample-data)
+      flex (time
+            (reduce (fn [flex [k v]]
+                      (flex-add flex k v))
+                    (init {:indexer :full :encoder :simple})
+                    dd))]
+  (time (flex-search flex "Things I Hate About"))
+  #_(clojure.pprint/pprint (:ids flex)))
