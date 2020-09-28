@@ -81,12 +81,15 @@
     :full index-full
     index-forward))
 
-(defn init [{:keys [tokenizer split indexer filter] :as options}]
+(defn default-splitter [^String s]
+  (string/split s #"[\W+|[^A-Za-z0-9]]"))
+
+(defn init [{:keys [tokenizer indexer filter] :as options}]
   (let [encoder (get-encoder (:encoder options))]
     (assoc (merge {:ids {} :data {}} options)
            :indexer (get-indexer indexer)
            :encoder encoder
-           :tokenizer (if (fn? tokenizer) tokenizer #(string/split % (or split #"\W+")))
+           :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
            :filter (set (mapv encoder filter)))))
 
 (defn add-index [data ^String value id]
