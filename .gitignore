@@ -11,3 +11,7 @@ javascript.js
 limpieza.clj
 sss.js
 tests.js
+classes/
+.cpcache/
+
+core
