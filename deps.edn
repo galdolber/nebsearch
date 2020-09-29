@@ -1,6 +1,7 @@
 ;; -Xmx5m
 {:paths ["src"]
- :deps {org.clojure/clojure #:mvn{:version "1.10.2-alpha1"}}
+ :deps {org.clojure/clojure #:mvn{:version "1.10.2-alpha1"}
+        persistent-sorted-set #:mvn{:version "0.1.2"}}
  :aliases
  {:test {:extra-paths ["test"]}
   :emacs {:extra-paths ["test"]}
