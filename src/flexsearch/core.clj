@@ -96,24 +96,26 @@
       (assoc flex
              :index (str index (when-not (string/blank? index) "$") (string/join "$" r))
              :data data))))
-;; REGEXES Y FILTER AGREGADOS:
+;; REGEXES Y FILTER AGREGADOS Y CORREGIDA:
 (defn flex-add [{:keys [index data encoder filter] :as flex} pairs]
   (loop [[[id w] & ws] pairs
          pos (count index)
          data data
          r []]
     (if w
-      (let [w (encoder w)]
+      (let [w (encoder w)
+            w (replace-regexes w advanced-regex)
+            w (default-splitter w)
+            wv (filter-words w filter)
+            w (apply str wv)]
         (recur ws
                (+ pos (count w) 1)
                (conj data [pos id])
                (conj r w)))
       (assoc flex
-             :index (let [r (map (fn [w] (replace-regexes w advanced-regex)) r)
-                          r (if filter (filter-words r filter) r)]
-                         (str index
-                          (when-not (string/blank? index) "$")
-                          (string/join "$" r)))
+             :index (str index
+                         (when-not (string/blank? index) "$")
+                         (string/join "$" r))
              :data data))))
 
 (defn indexes-of [v]
