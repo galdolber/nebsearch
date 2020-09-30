@@ -45,22 +45,25 @@
 (defn init [{:keys [tokenizer filter] :as options}]
   (let [encoder (get-encoder (:encoder options))]
     (assoc (merge {:data (pss/sorted-set)} options)
+           :index ""
            :encoder encoder
            :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
            :filter (set (mapv encoder filter)))))
 
+(def join-char \,)
+
 ;; TODO support updates
-(defn flex-add [{:keys [index data encoder] :as flex} pairs]
+(defn flex-add [{:keys [^String index data encoder] :as flex} pairs]
   (loop [[[id w] & ws] pairs
-         pos (count index)
-         data data
-         r []]
+         pos (.length index)
+         data (transient data)
+         r (transient [])]
     (if w
-      (let [w (encoder w)]
-        (recur ws (+ pos (count w) 1) (conj data [pos id]) (conj r w)))
+      (let [^String w (encoder w)]
+        (recur ws (+ pos (.length w) 1) (conj! data [pos id]) (conj! r w)))
       (assoc flex
-             :index (str index (when-not (string/blank? index) "$") (string/join "$" r))
-             :data data))))
+             :index (str index (string/join join-char (persistent! r)) join-char)
+             :data (persistent! data)))))
 
 ;; TODO
 (defn flex-remove [{:keys [] :as flex} id]
@@ -87,9 +90,10 @@
 (defn -main [& args]
   (let [sample-data (read-string (slurp "data.edn"))
         data (into {} (map vector (range) sample-data))
-        _ (read-line)
+        ;;_ (read-line)
         flex (init {:encoder :simple})
         flex (time (flex-add flex data))]
-    (read-line)
+    ;;(read-line)
     (mapv sample-data (time (flex-search flex "gal lade")))
-    (read-line)))
+    ;;(read-line)
+    ))
