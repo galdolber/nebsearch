@@ -21,7 +21,7 @@
   (vec (remove filterer words)))
 
 (defn default-splitter [^String s]
-  (remove string/blank? (string/split s #"[\W+|[^A-Za-z0-9]]")))
+  (remove #(= (count %) 1) (remove string/blank? (string/split s #"[\W+|[^A-Za-z0-9]]"))))
 
 (defn init [{:keys [tokenizer filter encoder] :as options}]
   (assoc options
@@ -64,12 +64,14 @@
                :index (str index (string/join join-char (persistent! r)) join-char)
                :data (persistent! data))))))
 
-(defn find-positions [text search]
+(defn find-positions [text min-pos max-pos search]
   (let [search-len (count search)]
-    (loop [from 0
+    (loop [from min-pos
            r []]
       (if-let [i (string/index-of text search from)]
-        (recur (+ (int i) search-len) (conj r i))
+        (if (or (not max-pos) (<= i max-pos))
+          (recur (+ (int i) search-len) (conj r i))
+          r)
         r))))
 
 (defn flex-search [{:keys [index data tokenizer filter encoder]} search]
@@ -77,10 +79,18 @@
     (let [search (encoder search)
           words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
-      (apply sets/intersection
-             (mapv #(set (mapv (fn [i]
-                                 (last (first (pss/rslice data [(inc i) nil] [-1 nil]))))
-                               (find-positions index %))) words)))))
+      (apply
+       sets/intersection
+       (loop [[w & ws] (reverse (sort-by count words))
+              r []
+              min-pos 0
+              max-pos (count index)]
+         (if w
+           (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
+             (recur ws (conj r (set (map last pairs)))
+                    (if (seq pairs) (int (apply min (map first pairs))) min-pos)
+                    (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos)))
+           r))))))
 
 (defn flex-gc [{:keys [index data] :as flex}]
   (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {})

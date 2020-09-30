@@ -3,8 +3,9 @@
             [flexsearch.core :as f]))
 
 (def sample-data (into {} (map vector (range) (read-string (slurp "data.edn")))))
+
 (deftest test-flex
-  (let [flex (time (f/flex-add (f/init {}) sample-data))
+  (let [flex (f/flex-add (f/init {}) sample-data)
         _ (is (= ["30 Nights of Paranormal Activity with the Devil Inside the Girl with the Dragon Tattoo"
                   "The Girl with the Dragon Tattoo"]
                  (mapv sample-data (f/flex-search flex "girl tatto"))))
@@ -24,7 +25,7 @@
         ;; update
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars"))))
         _ (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
-        flex (time (f/flex-add flex {0 "aka Dollars edited"}))
+        flex (f/flex-add flex {0 "aka Dollars edited"})
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
 
         ;; delete
