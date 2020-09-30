@@ -44,7 +44,7 @@
                (str (subs index 0 pos)
                     (apply str (repeat len " "))
                     (subs index (+ pos len)))))
-      (assoc flex ids (apply dissoc ids id-list) :data (persistent! data) :index index))))
+      (assoc flex :ids (apply dissoc ids id-list) :data (persistent! data) :index index))))
 
 (defn flex-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
