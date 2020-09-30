@@ -44,7 +44,7 @@
                (str (subs index 0 pos)
                     (apply str (repeat len " "))
                     (subs index (+ pos len)))))
-      (assoc flex :data (persistent! data) :index index))))
+      (assoc flex ids (apply dissoc ids id-list) :data (persistent! data) :index index))))
 
 (defn flex-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
@@ -81,6 +81,12 @@
              (mapv #(set (mapv (fn [i]
                                  (last (first (pss/rslice data [(inc i) nil] [-1 nil]))))
                                (find-positions index %))) words)))))
+
+(defn flex-gc [{:keys [index data] :as flex}]
+  (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {})
+            (mapv (fn [[pos id :as pair]]
+                    (let [len (:len (meta pair))]
+                      [id (subs index pos (+ pos len))])) data)))
 
 #?(:clj
    (defn -main [search & _]

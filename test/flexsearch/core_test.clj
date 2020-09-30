@@ -28,7 +28,10 @@
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
 
         ;; delete
-        flex (f/flex-remove flex [0])
-        _ (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars"))))
-        ]
-    ))
+        flex (f/flex-remove flex [0])]
+
+    (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars"))))
+
+    ;; compacting the index (garbage collection)
+    (is (= 464954 (count (:index flex))))
+    (is (= 464921 (count (:index (f/flex-gc flex)))))))
