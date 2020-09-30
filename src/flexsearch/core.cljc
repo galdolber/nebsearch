@@ -101,7 +101,7 @@
            r))))))
 
 (defn flex-gc [{:keys [index data] :as flex}]
-  (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {})
+  (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
             (mapv (fn [[pos id :as pair]]
                     (let [len (:len (meta pair))]
                       [id (subs index pos (+ pos len))])) data)))

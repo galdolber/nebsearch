@@ -35,9 +35,10 @@
         flex (f/flex-remove flex [0])]
     (is (= 31 (:garbage flex)))
 
-
     (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars"))))
 
     ;; compacting the index (garbage collection)
-    (is (= 464954 (count (:index flex))))
-    (is (= 464921 (count (:index (f/flex-gc flex)))))))
+    (let [g-flex (f/flex-gc flex)]
+      (is (= 464954 (count (:index flex))))
+      (is (= 464921 (count (:index g-flex))))
+      (is (zero? (:garbage g-flex))))))
