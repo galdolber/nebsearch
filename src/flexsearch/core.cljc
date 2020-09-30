@@ -38,20 +38,20 @@
 
 (def join-char \,)
 
-(defn flex-remove [{:keys [index data ids] :as flex} id-list]
+(defn flex-remove [{:keys [index data ids garbage] :as flex} id-list]
   (let [existing (filter identity (map ids id-list))]
     (loop [[[pos :as pair] & ps] existing
            data (transient data)
-           index index]
+           index index
+           garbage garbage]
       (if pair
         (let [len (:len (meta pair))]
           (recur ps (disj! data pair)
                  (str (subs index 0 pos)
                       (apply str (repeat len " "))
-                      (subs index (+ pos len)))))
-        (-> flex
-            (update :garbage + (count existing))
-            (assoc :ids (apply dissoc ids id-list) :data (persistent! data) :index index))))))
+                      (subs index (+ pos len)))
+                 (+ garbage len)))
+        (assoc flex :garbage garbage :ids (apply dissoc ids id-list) :data (persistent! data) :index index)))))
 
 (defn flex-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)

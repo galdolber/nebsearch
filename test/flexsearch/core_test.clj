@@ -30,10 +30,10 @@
         flex (f/flex-add flex {0 "aka Dollars edited"})
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
 
-        _ (is (= 1 (:garbage flex)))
+        _ (is (= 13 (:garbage flex)))
         ;; delete
         flex (f/flex-remove flex [0])]
-    (is (= 2 (:garbage flex)))
+    (is (= 31 (:garbage flex)))
 
 
     (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars"))))
