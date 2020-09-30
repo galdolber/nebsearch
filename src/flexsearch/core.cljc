@@ -30,6 +30,7 @@
   (assoc options
          :data (pss/sorted-set)
          :index ""
+         :garbage 0
          :ids {}
          :encoder (or encoder default-encoder)
          :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
@@ -38,29 +39,32 @@
 (def join-char \,)
 
 (defn flex-remove [{:keys [index data ids] :as flex} id-list]
-  (loop [[[pos :as pair] & ps] (filter identity (map ids id-list))
-         data (transient data)
-         index index]
-    (if pair
-      (let [len (:len (meta pair))]
-        (recur ps (disj! data pair)
-               (str (subs index 0 pos)
-                    (apply str (repeat len " "))
-                    (subs index (+ pos len)))))
-      (assoc flex :ids (apply dissoc ids id-list) :data (persistent! data) :index index))))
+  (let [existing (filter identity (map ids id-list))]
+    (loop [[[pos :as pair] & ps] existing
+           data (transient data)
+           index index]
+      (if pair
+        (let [len (:len (meta pair))]
+          (recur ps (disj! data pair)
+                 (str (subs index 0 pos)
+                      (apply str (repeat len " "))
+                      (subs index (+ pos len)))))
+        (-> flex
+            (update :garbage + (count existing))
+            (assoc :ids (apply dissoc ids id-list) :data (persistent! data) :index index))))))
 
 (defn flex-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (flex-remove flex (mapv first updated-pairs)) flex)]
     (loop [[[id w] & ws] pairs
-           pos (.length index)
+           pos #?(:clj (.length index) :cljs (.-length index))
            data (transient data)
            r (transient [])
            ids (transient ids)]
       (if w
         (let [^String w (encoder w)
-              len (.length w)
+              len #?(:clj (.length w) :cljs (.-length w))
               pair (with-meta [pos id] {:len len})]
           (recur ws (+ pos len 1) (conj! data pair) (conj! r w) (assoc! ids id pair)))
         (assoc flex

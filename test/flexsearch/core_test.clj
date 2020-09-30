@@ -22,14 +22,19 @@
                   "The Man in the Iron Mask"]
                  (mapv sample-data (f/flex-search flex "man iron"))))
 
+        _ (is (zero? (:garbage flex)))
+
         ;; update
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars"))))
         _ (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
         flex (f/flex-add flex {0 "aka Dollars edited"})
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/flex-search flex "aka Dollars edited"))))
 
+        _ (is (= 1 (:garbage flex)))
         ;; delete
         flex (f/flex-remove flex [0])]
+    (is (= 2 (:garbage flex)))
+
 
     (is (= [] (mapv sample-data (f/flex-search flex "aka Dollars"))))
 
