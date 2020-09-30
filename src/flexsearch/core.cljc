@@ -88,8 +88,8 @@
          (if w
            (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
              (recur ws (conj r (set (map last pairs)))
-                    (if (seq pairs) (int (apply min (map first pairs))) min-pos)
-                    (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos)))
+                    (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
+                    (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
            r))))))
 
 (defn flex-gc [{:keys [index data] :as flex}]
