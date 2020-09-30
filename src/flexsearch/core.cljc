@@ -48,7 +48,8 @@
 
 (defn flex-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
-        {:keys [ids ^String index data] :as flex} (flex-remove flex (mapv first updated-pairs))]
+        {:keys [ids ^String index data] :as flex}
+        (if (seq updated-pairs) (flex-remove flex (mapv first updated-pairs)) flex)]
     (loop [[[id w] & ws] pairs
            pos (.length index)
            data (transient data)
