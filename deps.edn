@@ -1,15 +1,17 @@
 ;; -Xmx5m
 {:paths ["src"]
- :deps {org.clojure/clojure #:mvn{:version "1.10.2-alpha1"}
-        persistent-sorted-set #:mvn{:version "0.1.2"}}
+ :deps {org.clojure/clojure #:mvn{:version "1.10.2-alpha2"}
+        persistent-sorted-set #:mvn{:version "0.1.2"}
+        borkdude/edamame #:mvn{:version "0.0.11-alpha.15"}}
  :aliases
  {:test {:extra-paths ["test"]}
   :emacs {:extra-paths ["test"]}
   :native-image
   {:main-opts ["-m clj.native-image flexsearch.core"
-               ;;"--pgo=datalite.iprof"
+               #_"--pgo=flexsearch.iprof"
                "--initialize-at-build-time" "--no-fallback"
                "--report-unsupported-elements-at-runtime"
+               #_"-H:+StaticExecutableWithDynamicLibC"
                #_"-H:+PrintAnalysisCallTree"
                "-H:Name=core" "-H:+ReportExceptionStackTraces"]
    :jvm-opts ["-Dclojure.compiler.direct-linking=true"

@@ -2,6 +2,7 @@
   #?(:clj (:gen-class))
   (:require [clojure.string :as string]
             [clojure.set :as sets]
+            [edamame.core :refer [parse-string]]
             [me.tonsky.persistent-sorted-set :as pss]))
 
 #?(:clj (set! *warn-on-reflection* true))
@@ -108,10 +109,11 @@
 
 #?(:clj
    (defn -main [search & _]
-     (let [sample-data (read-string (slurp "data.edn"))
+     (let [sample-data (parse-string (slurp "data.edn"))
            data (into {} (map vector (range) sample-data))
            flex (time (flex-add (init {}) data))
            ;;flex (time (flex-add flex {0 "aka Dollars hen"}))
            ;;flex (time (flex-remove flex [0]))
            ]
+       (time (flex-search flex search))
        (println (mapv sample-data (time (flex-search flex search)))))))
