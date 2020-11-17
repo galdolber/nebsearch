@@ -13,7 +13,7 @@
 
    :cljs (defn normalize [^string s]
            (let [^string s (.normalize s "NFD")]
-             (.replaceAll s (js/RegExp. "[\u0300-\u036f]" \g) ""))))
+             (clojure.string/replace s #"[\u0300-\u036f]" ""))))
 
 (defn default-encoder [value]
   (when value
