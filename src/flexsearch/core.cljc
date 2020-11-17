@@ -12,9 +12,8 @@
        (clojure.string/replace normalized #"\p{InCombiningDiacriticalMarks}+" "")))
 
    :cljs (defn normalize [^string s]
-           (.replaceAll
-            ^string (.normalize s "NFD")
-            (js/RegExp. "[\u0300-\u036f]" \g) "")))
+           (let [^string s (.normalize s "NFD")]
+             (.replaceAll s (js/RegExp. "[\u0300-\u036f]" \g) ""))))
 
 (defn default-encoder [value]
   (when value
