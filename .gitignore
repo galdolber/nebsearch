@@ -15,3 +15,5 @@ classes/
 .cpcache/
 
 core
+
+.lsp/sqlite.db

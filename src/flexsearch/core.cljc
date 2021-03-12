@@ -89,18 +89,20 @@
     (let [search (encoder search)
           words (tokenizer search)
           words (set (if filter (filter-words words filter) words))]
-      (apply
-       sets/intersection
-       (loop [[w & ws] (reverse (sort-by count words))
-              r []
-              min-pos 0
-              max-pos (count index)]
-         (if w
-           (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
-             (recur ws (conj r (set (map last pairs)))
-                    (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
-                    (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
-           r))))))
+      (if (empty? words)
+        #{}
+        (apply
+         sets/intersection
+         (loop [[w & ws] (reverse (sort-by count words))
+                r []
+                min-pos 0
+                max-pos (count index)]
+           (if w
+             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
+               (recur ws (conj r (set (map last pairs)))
+                      (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
+                      (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
+             r)))))))
 
 (defn flex-gc [{:keys [index data] :as flex}]
   (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
