@@ -1,4 +1,4 @@
-(ns flexsearch.core
+(ns nebsearch.core
   #?(:clj (:gen-class))
   (:require [clojure.string :as string]
             [clojure.set :as sets]
@@ -40,7 +40,7 @@
 
 (def join-char \,)
 
-(defn flex-remove [{:keys [index data ids garbage] :as flex} id-list]
+(defn search-remove [{:keys [index data ids garbage] :as flex} id-list]
   (let [existing (filter identity (map ids id-list))]
     (loop [[[pos :as pair] & ps] existing
            data (transient data)
@@ -55,10 +55,10 @@
                  (+ garbage len)))
         (assoc flex :garbage garbage :ids (apply dissoc ids id-list) :data (persistent! data) :index index)))))
 
-(defn flex-add [{:keys [ids encoder] :as flex} pairs]
+(defn search-add [{:keys [ids encoder] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data] :as flex}
-        (if (seq updated-pairs) (flex-remove flex (mapv first updated-pairs)) flex)]
+        (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
     (loop [[[id w] & ws] pairs
            pos #?(:clj (.length index) :cljs (.-length index))
            data (transient data)
@@ -84,7 +84,7 @@
           r)
         r))))
 
-(defn flex-search [{:keys [index data tokenizer filter encoder]} search]
+(defn search [{:keys [index data tokenizer filter encoder]} search]
   (when (and search data)
     (let [search (encoder search)
           words (tokenizer search)
@@ -104,8 +104,8 @@
                       (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
              r)))))))
 
-(defn flex-gc [{:keys [index data] :as flex}]
-  (flex-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
+(defn search-gc [{:keys [index data] :as flex}]
+  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
             (mapv (fn [[pos id :as pair]]
                     (let [len (:len (meta pair))]
                       [id (subs index pos (+ pos len))])) data)))
