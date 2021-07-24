@@ -29,14 +29,15 @@
         (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
 
 (defn init [{:keys [tokenizer filter encoder] :as options}]
-  (assoc options
-         :data (pss/sorted-set)
-         :index ""
-         :garbage 0
-         :ids {}
-         :encoder (or encoder default-encoder)
-         :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
-         :filter (set (mapv encoder filter))))
+  (with-meta
+    (assoc options
+           :data (pss/sorted-set)
+           :index ""
+           :garbage 0
+           :ids {})
+    {:encoder (or encoder default-encoder)
+     :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
+     :filter (set (mapv encoder filter))}))
 
 (def join-char \,)
 
@@ -55,8 +56,9 @@
                  (+ garbage len)))
         (assoc flex :garbage garbage :ids (apply dissoc ids id-list) :data (persistent! data) :index index)))))
 
-(defn search-add [{:keys [ids encoder] :as flex} pairs]
-  (let [updated-pairs (filter (comp ids first) pairs)
+(defn search-add [{:keys [ids] :as flex} pairs]
+  (let [encoder (:encoder (meta flex))
+        updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
     (loop [[[id w] & ws] pairs
@@ -84,25 +86,26 @@
           r)
         r))))
 
-(defn search [{:keys [index data tokenizer filter encoder]} search]
-  (when (and search data)
-    (let [search (encoder search)
-          words (tokenizer search)
-          words (set (if filter (filter-words words filter) words))]
-      (if (empty? words)
-        #{}
-        (apply
-         sets/intersection
-         (loop [[w & ws] (reverse (sort-by count words))
-                r []
-                min-pos 0
-                max-pos (count index)]
-           (if w
-             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
-               (recur ws (conj r (set (map last pairs)))
-                      (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
-                      (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
-             r)))))))
+(defn search [{:keys [index data] :as flex} search]
+  (let [{:keys [tokenizer filter encoder]} (meta flex)]
+    (when (and search data)
+      (let [search (encoder search)
+            words (tokenizer search)
+            words (set (if filter (filter-words words filter) words))]
+        (if (empty? words)
+          #{}
+          (apply
+           sets/intersection
+           (loop [[w & ws] (reverse (sort-by count words))
+                  r []
+                  min-pos 0
+                  max-pos (count index)]
+             (if w
+               (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
+                 (recur ws (conj r (set (map last pairs)))
+                        (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
+                        (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
+               r))))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
   (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)

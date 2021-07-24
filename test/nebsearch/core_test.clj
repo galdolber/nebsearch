@@ -42,3 +42,9 @@
       (is (= 464954 (count (:index flex))))
       (is (= 464921 (count (:index g-flex))))
       (is (zero? (:garbage g-flex))))))
+
+(deftest hashing-consistent-test
+  (is
+   (= (hash (f/search-add (f/init {}) sample-data))
+      (hash (f/search-add (f/init {}) sample-data))
+      (hash (f/search-add (f/init {}) sample-data)))))
