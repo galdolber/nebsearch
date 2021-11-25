@@ -23,10 +23,7 @@
   (vec (remove filterer words)))
 
 (defn default-splitter [^String s]
-  (mapv #(if (= (count %) 1)
-           (str " " %)
-           %)
-        (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
+  (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]")))
 
 (defn init [{:keys [tokenizer filter encoder] :as options}]
   (with-meta
