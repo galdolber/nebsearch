@@ -1,8 +1,9 @@
 (ns nebsearch.core-test
   (:require [clojure.test :refer [deftest is]]
-            [nebsearch.core :as f]))
+            [nebsearch.core :as f]
+            [me.tonsky.persistent-sorted-set :as pss]))
 
-(def sample-data (into {} (map vector (range) (read-string (slurp "data.edn")))))
+(def sample-data (into {} (mapv vector (range) (read-string (slurp "data.edn")))))
 
 (deftest test-flex
   (let [flex (f/search-add (f/init {}) sample-data)
