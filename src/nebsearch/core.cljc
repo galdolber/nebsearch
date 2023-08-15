@@ -43,7 +43,7 @@
            index index
            garbage garbage]
       (if pair
-        (let [len (nth pair 2)]
+        (let [len (:len (meta pair))]
           (recur ps (disj! data pair)
                  (str (subs index 0 pos)
                       (apply str (repeat len " "))
@@ -63,7 +63,7 @@
       (if w
         (let [^String w (encoder w)
               len #?(:clj (.length w) :cljs (.-length w))
-              pair [pos id len]]
+              pair (with-meta [pos id] {:len len})]
           (recur ws (+ pos len 1) (conj! data pair) (conj! r w) (assoc! ids id pair)))
         (assoc flex
                :ids (persistent! ids)
@@ -80,7 +80,7 @@
           r)
         r))))
 
-(defn search [{:keys [index data tokenizer filter encoder]} search]
+(defn search [{:keys [index data tokenizer filter encoder] :as flex} search]
   (when (and search data)
     (let [search (encoder search)
           words (tokenizer search)
@@ -94,30 +94,14 @@
                 min-pos 0
                 max-pos (count index)]
            (if w
-             (let [pairs
-                   (mapv
-                    (fn [i]
-                      (first
-                       (pss/rslice data
-                                   [(inc i) nil nil]
-                                   [-1 nil nil])))
-                    (find-positions index min-pos max-pos w))]
+             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] [-1 nil]))) (find-positions index min-pos max-pos w))]
                (recur ws (conj r (set (map last pairs)))
                       (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
-                      (int (if (seq pairs) (int (apply max (map #(+ (nth % 2) (first %)) pairs))) max-pos))))
+                      (int (if (seq pairs) (int (apply max (map #(+ (:len (meta %)) (first %)) pairs))) max-pos))))
              r)))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
   (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
-              (mapv (fn [[pos id :as pair]]
-                      (let [len (nth pair 2)]
-                        [id (subs index pos (+ pos len))])) data)))
-
-
-(let [i 1]
-  (first
-   (pss/rslice (pss/sorted-set [1 100 10]
-                               [2 200 20]
-                               [3 300 30])
-               [(inc i) nil nil]
-               nil)))
+            (mapv (fn [[pos id :as pair]]
+                    (let [len (:len (meta pair))]
+                      [id (subs index pos (+ pos len))])) data)))
