@@ -27,36 +27,30 @@
 (defn default-splitter [^String s]
   (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]")))
 
-(defn init [{:keys [tokenizer filter encoder]}]
+(defn init []
   {:data (pss/sorted-set)
    :index ""
-   :garbage 0
-   :ids {}
-   :encoder (or encoder default-encoder)
-   :tokenizer (if (fn? tokenizer) tokenizer default-splitter)
-   :filter (when filter (set (mapv encoder filter)))})
+   :ids {}})
 
 (defn find-len [index pos]
   (- (string/index-of index join-char pos) pos))
 
-(defn search-remove [{:keys [index data ids garbage] :as flex} id-list]
+(defn search-remove [{:keys [index data ids] :as flex} id-list]
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))]
     (loop [[[pos :as pair] & ps] existing
            data (transient data)
-           index index
-           garbage garbage]
+           index index]
       (if pair
         (let [len (find-len index pos)]
           (recur ps (disj! data pair)
                  (str (subs index 0 pos)
                       (apply str (repeat len " "))
-                      (subs index (+ pos len)))
-                 (+ garbage len)))
+                      (subs index (+ pos len)))))
         (assoc flex
-               :garbage garbage :ids (apply dissoc ids id-list)
+               :ids (apply dissoc ids id-list)
                :data (persistent! data) :index index)))))
 
-(defn search-add [{:keys [ids encoder] :as flex} pairs]
+(defn search-add [{:keys [ids] :as flex} pairs]
   (let [updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
@@ -66,7 +60,7 @@
            r (transient [])
            ids (transient ids)]
       (if w
-        (let [^String w (encoder w)
+        (let [^String w (default-encoder w)
               len #?(:clj (.length w) :cljs (.-length w))
               pair [pos id]]
           (recur ws (+ pos len 1) (conj! data pair) (conj! r w)
@@ -86,11 +80,10 @@
           r)
         r))))
 
-(defn search [{:keys [index data tokenizer filter encoder]} search]
+(defn search [{:keys [index data]} search]
   (when (and search data)
-    (let [search (encoder search)
-          words (tokenizer search)
-          words (set (if filter (filter-words words filter) words))]
+    (let [search (default-encoder search)
+          words (default-splitter search)]
       (if (empty? words)
         #{}
         (apply
@@ -109,7 +102,7 @@
              r)))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
-  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {} :garbage 0)
-            (mapv (fn [[pos id :as pair]]
-                    (let [len (find-len index (first pair))]
-                      [id (subs index pos (+ pos len))])) data)))
+  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {})
+              (mapv (fn [[pos id :as pair]]
+                      (let [len (find-len index (first pair))]
+                        [id (subs index pos (+ pos len))])) data)))
