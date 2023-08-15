@@ -7,7 +7,7 @@
 #?(:clj (set! *warn-on-reflection* true))
 
 #?(:clj
-   (defn ^String normalize [^String str]
+   (defn normalize ^String [^String str]
      (let [^String normalized (java.text.Normalizer/normalize str java.text.Normalizer$Form/NFD)]
        (clojure.string/replace normalized #"\p{InCombiningDiacriticalMarks}+" "")))
 
