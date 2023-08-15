@@ -1,7 +1,6 @@
 (ns nebsearch.core-test
   (:require [clojure.test :refer [deftest is]]
-            [nebsearch.core :as f]
-            [me.tonsky.persistent-sorted-set :as pss]))
+            [nebsearch.core :as f]))
 
 (def sample-data (into {} (mapv vector (range) (read-string (slurp "data.edn")))))
 
