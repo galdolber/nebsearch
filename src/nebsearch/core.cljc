@@ -84,6 +84,13 @@
                :index (str index (string/join join-char (persistent! r)) join-char)
                :data data)))))
 
+(defn rebuild-index [pairs]
+  (loop [[[_ w] & ws] pairs
+         r (transient [])]
+    (if w
+      (recur ws (conj! r (default-encoder w)))
+      (str (string/join join-char (persistent! r)) join-char))))
+
 (defn find-positions [text min-pos max-pos search]
   (let [search-len (count search)]
     (loop [from min-pos
@@ -107,16 +114,19 @@
                 min-pos 0
                 max-pos (count index)]
            (if w
-             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil))) (find-positions index min-pos max-pos w))]
+             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
+                               (find-positions index min-pos max-pos w))]
                (recur ws (conj r (set (map last pairs)))
                       (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
                       (int (if (seq pairs)
-                             (int (apply max (map #(+ (find-len index (first %)) (first %)) pairs)))
+                             (int (apply max (map #(+ (find-len index (first %)) (first %))
+                                                  pairs)))
                              max-pos))))
              r)))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
-  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids (new-data))
-              (mapv (fn [[pos id :as pair]]
-                      (let [len (find-len index (first pair))]
-                        [id (subs index pos (+ pos len))])) data)))
+  (assoc flex :index
+         (rebuild-index
+          (mapv (fn [[pos id :as pair]]
+                  (let [len (find-len index (first pair))]
+                    [id (subs index pos (+ pos len))])) data))))
