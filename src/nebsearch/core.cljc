@@ -6,6 +6,20 @@
 
 #?(:clj (set! *warn-on-reflection* true))
 
+(defn dbid-comparator [[a] [b]]
+  (compare a b))
+
+(defn new-data [] (pss/sorted-set-by dbid-comparator))
+
+(defn data-get [m k]
+  (when m
+    (let [k [k]]
+      (second (first (pss/slice m k k))))))
+
+(defn data-disj [m & ks]
+  (when m
+    (apply disj m (mapv (fn [k] [k]) ks))))
+
 #?(:clj
    (defn normalize ^String [^String str]
      (let [^String normalized (java.text.Normalizer/normalize str java.text.Normalizer$Form/NFD)]
@@ -30,45 +44,45 @@
 (defn init []
   {:data (pss/sorted-set)
    :index ""
-   :ids {}})
+   :ids (new-data)})
 
 (defn find-len [index pos]
   (- (string/index-of index join-char pos) pos))
 
 (defn search-remove [{:keys [index data ids] :as flex} id-list]
-  (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))]
+  (let [existing (filter identity (mapv (fn [id] [(data-get ids id) id]) id-list))]
     (loop [[[pos :as pair] & ps] existing
-           data (transient data)
+           data data
            index index]
       (if pair
         (let [len (find-len index pos)]
-          (recur ps (disj! data pair)
+          (recur ps (disj data pair)
                  (str (subs index 0 pos)
                       (apply str (repeat len " "))
                       (subs index (+ pos len)))))
         (assoc flex
-               :ids (apply dissoc ids id-list)
-               :data (persistent! data) :index index)))))
+               :ids (apply data-disj ids id-list)
+               :data data :index index)))))
 
 (defn search-add [{:keys [ids] :as flex} pairs]
-  (let [updated-pairs (filter (comp ids first) pairs)
+  (let [updated-pairs (filter (comp #(data-get ids %) first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
     (loop [[[id w] & ws] pairs
            pos #?(:clj (.length index) :cljs (.-length index))
-           data (transient data)
+           data data
            r (transient [])
-           ids (transient ids)]
+           ids ids]
       (if w
         (let [^String w (default-encoder w)
               len #?(:clj (.length w) :cljs (.-length w))
               pair [pos id]]
-          (recur ws (+ pos len 1) (conj! data pair) (conj! r w)
-                 (assoc! ids id (first pair))))
+          (recur ws (+ pos len 1) (conj data pair) (conj! r w)
+                 (conj ids [id (first pair)])))
         (assoc flex
-               :ids (persistent! ids)
+               :ids ids
                :index (str index (string/join join-char (persistent! r)) join-char)
-               :data (persistent! data))))))
+               :data data)))))
 
 (defn find-positions [text min-pos max-pos search]
   (let [search-len (count search)]
@@ -102,7 +116,7 @@
              r)))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
-  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids {})
+  (search-add (assoc flex :data (pss/sorted-set) :index "" :ids (new-data))
               (mapv (fn [[pos id :as pair]]
                       (let [len (find-len index (first pair))]
                         [id (subs index pos (+ pos len))])) data)))

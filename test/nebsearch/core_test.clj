@@ -29,7 +29,6 @@
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/search flex "aka Dollars edited"))))
         ;; delete
         flex (f/search-remove flex [0])]
-
     (is (= [] (mapv sample-data (f/search flex "aka Dollars"))))
 
     (let [g-flex (f/search-gc flex)]
