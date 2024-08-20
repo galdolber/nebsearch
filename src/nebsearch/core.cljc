@@ -39,9 +39,10 @@
   (vec (remove filterer words)))
 
 (defn default-splitter [^String s]
-  (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]")))
+  (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
 
 (defn init []
+  ^{:cache (atom {})}
   {:data (pss/sorted-set)
    :index ""
    :ids (new-data)})
@@ -51,6 +52,7 @@
 
 (defn search-remove [{:keys [index data ids] :as flex} id-list]
   (let [existing (filter identity (mapv (fn [id] [(data-get ids id) id]) id-list))]
+    (swap! (:cache (meta flex)) update-vals #(apply disj % id-list))
     (loop [[[pos :as pair] & ps] existing
            data data
            index index]
@@ -68,6 +70,7 @@
   (let [updated-pairs (filter (comp #(data-get ids %) first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
+    (reset! (:cache (meta flex)) {})
     (loop [[[id w] & ws] pairs
            pos #?(:clj (.length index) :cljs (.-length index))
            data data
@@ -101,28 +104,32 @@
           r)
         r))))
 
-(defn search [{:keys [index data]} search]
+(defn search [{:keys [index data] :as flex} search]
   (when (and search data)
-    (let [search (default-encoder search)
-          words (default-splitter search)]
+    (let [cache (:cache (meta flex))
+          words (default-splitter (default-encoder search))]
       (if (empty? words)
         #{}
-        (apply
-         sets/intersection
-         (loop [[w & ws] (reverse (sort-by count words))
-                r []
-                min-pos 0
-                max-pos (count index)]
-           (if w
-             (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
-                               (find-positions index min-pos max-pos w))]
-               (recur ws (conj r (set (map last pairs)))
-                      (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
-                      (int (if (seq pairs)
-                             (int (apply max (map #(+ (find-len index (first %)) (first %))
-                                                  pairs)))
-                             max-pos))))
-             r)))))))
+        (or (get @cache words)
+            (let [result
+                  (apply
+                   sets/intersection
+                   (loop [[w & ws] (reverse (sort-by count words))
+                          r []
+                          min-pos 0
+                          max-pos (count index)]
+                     (if w
+                       (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
+                                         (find-positions index min-pos max-pos w))]
+                         (recur ws (conj r (set (map last pairs)))
+                                (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
+                                (int (if (seq pairs)
+                                       (int (apply max (map #(+ (find-len index (first %)) (first %))
+                                                            pairs)))
+                                       max-pos))))
+                       r)))]
+              (swap! cache assoc words result)
+              result))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
   (assoc flex :index
