@@ -6,6 +6,8 @@
 
 (deftest test-flex
   (let [flex (f/search-add (f/init) sample-data)
+        flex (f/deserialize (f/serialize flex))
+
         _ (is (= ["30 Nights of Paranormal Activity with the Devil Inside the Girl with the Dragon Tattoo"
                   "The Girl with the Dragon Tattoo"]
                  (mapv sample-data (f/search flex "girl tatto"))))
@@ -47,7 +49,6 @@
         ;; cache on remove
         _ (is (= {#{"aka" "edited" "dollars"} #{}}
                  @(:cache (meta flex))))]
-
 
     (is (= [] (mapv sample-data (f/search flex "aka Dollars"))))
 
