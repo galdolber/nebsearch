@@ -15,14 +15,12 @@
            (let [^string s (.normalize s "NFD")]
              (clojure.string/replace s #"[\u0300-\u036f]" ""))))
 
-(def join-char \ñ) ;; this char is replaced by the encoder
+(def join-char \ñ) ;; normalized to 'n' by encoder, ensures it never appears in indexed text
 
 (defn default-encoder [value]
   (when value
     (normalize (string/lower-case value))))
 
-(defn filter-words [words filterer]
-  (vec (remove filterer words)))
 
 (defn default-splitter [^String s]
   (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
@@ -37,12 +35,19 @@
   (update flex :data #(into #{} %)))
 
 (defn deserialize [flex]
-  (update flex :data #(apply pss/sorted-set %)))
+  (-> flex
+      (update :data #(apply pss/sorted-set %))
+      (vary-meta #(or % {:cache (atom {})}))))
 
 (defn find-len [index pos]
-  (- (string/index-of index join-char pos) pos))
+  (if-let [end (string/index-of index join-char pos)]
+    (- end pos)
+    (throw (ex-info "Invalid index position: join-char not found"
+                    {:pos pos :index-length (count index)}))))
 
 (defn search-remove [{:keys [index data ids] :as flex} id-list]
+  {:pre [(map? flex)
+         (or (nil? id-list) (sequential? id-list))]}
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))]
     (swap! (:cache (meta flex)) update-vals #(apply disj % id-list))
     (loop [[[pos :as pair] & ps] existing
@@ -59,7 +64,10 @@
                :data (persistent! data) :index index)))))
 
 (defn search-add [{:keys [ids] :as flex} pairs]
-  (let [updated-pairs (filter (comp ids first) pairs)
+  {:pre [(map? flex)
+         (or (map? pairs) (sequential? pairs))]}
+  (let [pairs (if (map? pairs) (seq pairs) pairs)
+        updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
     (reset! (:cache (meta flex)) {})
@@ -97,7 +105,9 @@
         r))))
 
 (defn search [{:keys [index data] :as flex} search]
-  (when (and search data)
+  {:pre [(map? flex)]}
+  (if-not (and search data)
+    #{}
     (let [cache (:cache (meta flex))
           words (default-splitter (default-encoder search))]
       (if (empty? words)
@@ -111,21 +121,25 @@
                           min-pos 0
                           max-pos (count index)]
                      (if w
-                       (let [pairs (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
-                                         (find-positions index min-pos max-pos w))]
-                         (recur ws (conj r (set (map last pairs)))
-                                (int (if (seq pairs) (int (apply min (map first pairs))) min-pos))
-                                (int (if (seq pairs)
-                                       (int (apply max (map #(+ (find-len index (first %)) (first %))
-                                                            pairs)))
-                                       max-pos))))
+                       (let [positions (find-positions index min-pos max-pos w)
+                             pairs (filterv some? (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
+                                                        positions))]
+                         (if (seq pairs)
+                           (let [new-min (long (apply min (map first pairs)))
+                                 new-max (long (reduce (fn [mx [pos _]]
+                                                         (max mx (+ pos (find-len index pos))))
+                                                       0
+                                                       pairs))]
+                             (recur ws (conj r (set (map last pairs)))
+                                    new-min new-max))
+                           (recur ws (conj r #{}) min-pos max-pos)))
                        r)))]
               (swap! cache assoc words result)
               result))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
-  (assoc flex :index
-         (rebuild-index
-          (mapv (fn [[pos id :as pair]]
-                  (let [len (find-len index (first pair))]
-                    [id (subs index pos (+ pos len))])) data))))
+  (let [pairs (mapv (fn [[pos id :as pair]]
+                      (let [len (find-len index (first pair))]
+                        [id (subs index pos (+ pos len))])) data)
+        new-flex (search-add (init) pairs)]
+    (with-meta new-flex (meta flex))))
