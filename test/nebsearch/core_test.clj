@@ -29,7 +29,7 @@
         _ (is (= {#{"tatto" "girl"} #{118 20110},
                   #{"tatto" "30" "girl"} #{118},
                   #{"man" "iron"} #{475 9434 9432 21523 9433 11379 21465}}
-                 @(:cache (meta flex))))
+                 (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta flex))))))
 
         ;; update
         _ (is (= ["$ aka Dollars"] (mapv sample-data (f/search flex "aka Dollars"))))
@@ -43,13 +43,13 @@
 
         ;; cache after add and search
         _ (is (= {#{"aka" "edited" "dollars"} #{0}}
-                 @(:cache (meta flex))))
+                 (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta flex))))))
         ;; delete
         flex (f/search-remove flex [0])
 
         ;; cache on remove
         _ (is (= {#{"aka" "edited" "dollars"} #{}}
-                 @(:cache (meta flex))))]
+                 (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta flex))))))]
 
     (is (= [] (mapv sample-data (f/search flex "aka Dollars"))))
 
@@ -97,7 +97,7 @@
 
     ;; Cache should work
     (is (= #{1} (f/search deserialized "test")))
-    (is (= {#{"test"} #{1}} @(:cache (meta deserialized))))))
+    (is (= {#{"test"} #{1}} (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta deserialized))))))))
 
 (deftest test-find-len-bounds-checking
   "Bug #2: find-len should throw meaningful error when join-char not found"
@@ -170,7 +170,7 @@
   "Verify cache is properly invalidated on updates"
   (let [flex (f/search-add (f/init) {1 "test"})
         _ (f/search flex "test") ;; populate cache
-        _ (is (= {#{"test"} #{1}} @(:cache (meta flex))))
+        _ (is (= {#{"test"} #{1}} (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta flex))))))
 
         ;; Add should reset cache
         flex2 (f/search-add flex {2 "hello"})
@@ -272,27 +272,29 @@
 
 (deftest test-gc-effectiveness
   "Test that GC actually reduces index size"
-  (let [data (into {} (map (fn [i] [i (str "unique-" i "-" (apply str (repeat 50 \x)))]) (range 100)))
-        flex (f/search-add (f/init) data)
-        initial-size (count (:index flex))]
+  ;; Disable auto-GC for this test so we can test manual GC
+  (binding [f/*auto-gc-threshold* 1.0] ;; 100% threshold = never auto-trigger
+    (let [data (into {} (map (fn [i] [i (str "unique-" i "-" (apply str (repeat 50 \x)))]) (range 100)))
+          flex (f/search-add (f/init) data)
+          initial-size (count (:index flex))]
 
-    ;; Remove 50% of items
-    (let [flex2 (f/search-remove flex (range 0 50))
-          fragmented-size (count (:index flex2))]
+      ;; Remove 50% of items
+      (let [flex2 (f/search-remove flex (range 0 50))
+            fragmented-size (count (:index flex2))]
 
-      ;; Size should be same (spaces instead of removed items)
-      (is (= initial-size fragmented-size))
+        ;; Size should be same (spaces instead of removed items)
+        (is (= initial-size fragmented-size))
 
-      ;; After GC, size should be smaller
-      (let [flex3 (f/search-gc flex2)
-            compacted-size (count (:index flex3))]
+        ;; After GC, size should be smaller
+        (let [flex3 (f/search-gc flex2)
+              compacted-size (count (:index flex3))]
 
-        (is (< compacted-size fragmented-size))
-        (is (< compacted-size (* initial-size 0.6))) ;; Should be ~50% + overhead
+          (is (< compacted-size fragmented-size))
+          (is (< compacted-size (* initial-size 0.6))) ;; Should be ~50% + overhead
 
-        ;; Verify search still works
-        (is (= #{50} (f/search flex3 "unique-50")))
-        (is (= #{} (f/search flex3 "unique-25")))))))
+          ;; Verify search still works
+          (is (= #{50} (f/search flex3 "unique-50")))
+          (is (= #{} (f/search flex3 "unique-25"))))))))
 
 (deftest test-unicode-handling
   "Test handling of unicode characters"
@@ -470,25 +472,27 @@
 
 (deftest test-index-fragmentation
   "Test index fragmentation after many operations"
-  (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 100))))]
+  ;; Disable auto-GC for this test
+  (binding [f/*auto-gc-threshold* 1.0] ;; 100% threshold = never auto-trigger
+    (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 100))))]
 
-    ;; Remove every other item
-    (let [flex2 (f/search-remove flex (range 0 100 2))
-          fragmented-index (:index flex2)]
+      ;; Remove every other item
+      (let [flex2 (f/search-remove flex (range 0 100 2))
+            fragmented-index (:index flex2)]
 
-      ;; Index should contain spaces (fragmentation)
-      (is (> (count fragmented-index) 0))
+        ;; Index should contain spaces (fragmentation)
+        (is (> (count fragmented-index) 0))
 
-      ;; Count spaces (fragmentation)
-      (let [space-count (count (filter #(= % \space) fragmented-index))]
-        (is (> space-count 0) "Should have spaces from removed items"))
+        ;; Count spaces (fragmentation)
+        (let [space-count (count (filter #(= % \space) fragmented-index))]
+          (is (> space-count 0) "Should have spaces from removed items"))
 
-      ;; After GC, should have fewer/no spaces in content
-      (let [flex3 (f/search-gc flex2)
-            compacted-index (:index flex3)]
+        ;; After GC, should have fewer/no spaces in content
+        (let [flex3 (f/search-gc flex2)
+              compacted-index (:index flex3)]
 
-        ;; Should be more compact
-        (is (< (count compacted-index) (count fragmented-index)))))))
+          ;; Should be more compact
+          (is (< (count compacted-index) (count fragmented-index))))))))
 
 (deftest test-empty-values
   "Test handling of empty and nil values"
@@ -560,3 +564,211 @@
     ;; Multi-word with common term should still work
     (let [results (f/search flex "common prefix-250")]
       (is (= #{250} results)))))
+
+;; Optimization tests
+
+(deftest test-lru-cache-eviction
+  "Test that LRU cache evicts old entries when exceeding *cache-size*"
+  (binding [f/*cache-size* 5] ;; Set small cache for testing
+    (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 100))))
+          cache (:cache (meta flex))]
+
+      ;; Perform 10 different searches
+      (dotimes [i 10]
+        (f/search flex (str i)))
+
+      ;; Cache should have at most 5 entries (evicted to 80% of *cache-size*)
+      (is (<= (count @cache) 5))
+      (is (>= (count @cache) 4)) ;; Should be ~4 (80% of 5)
+
+      ;; Some entries should have been evicted (started with 10, now have <= 5)
+      (is (< (count @cache) 10))
+
+      ;; All cache entries should be valid
+      (doseq [[k v] @cache]
+        (is (set? k))
+        (is (map? v))
+        (is (contains? v :value))
+        (is (contains? v :access-time))))))
+
+(deftest test-lru-cache-access-time-update
+  "Test that accessing cached entries updates their access time"
+  (binding [f/*cache-size* 3]
+    (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 100))))
+          cache (:cache (meta flex))]
+
+      ;; Search for 0, 1, 2 (fills cache)
+      (f/search flex "0")
+      (Thread/sleep 10)
+      (f/search flex "1")
+      (Thread/sleep 10)
+      (f/search flex "2")
+
+      ;; All three should be in cache
+      (is (= 3 (count @cache)))
+
+      ;; Access "0" again to update its access time
+      (Thread/sleep 10)
+      (f/search flex "0")
+
+      ;; Now search for "3" (should evict "1", not "0" since we just accessed "0")
+      (Thread/sleep 10)
+      (f/search flex "3")
+
+      ;; Cache should have evicted oldest to ~80% = 2-3 entries
+      (is (<= (count @cache) 3))
+
+      ;; "0" should still be there since we accessed it recently
+      (is (contains? @cache #{(str 0)})))))
+
+(deftest test-auto-gc-threshold
+  "Test that GC automatically triggers when fragmentation exceeds threshold"
+  (binding [f/*auto-gc-threshold* 0.5] ;; 50% fragmentation threshold
+    (let [;; Create data with long strings to make fragmentation noticeable
+          data (into {} (map (fn [i] [i (str "longword-" i "-" (apply str (repeat 20 \x)))]) (range 50)))
+          flex (f/search-add (f/init) data)
+          initial-size (count (:index flex))]
+
+      ;; Remove 40% of items (should not trigger auto-GC yet, below 50% threshold)
+      (let [flex2 (f/search-remove flex (range 0 20))
+            size-after-20 (count (:index flex2))]
+        ;; Size should be same (spaces instead of removed items, no auto-GC)
+        (is (= initial-size size-after-20)))
+
+      ;; Remove more items to exceed 50% fragmentation threshold
+      (let [flex3 (f/search-remove flex (range 0 26))
+            size-after-26 (count (:index flex3))]
+
+        ;; Auto-GC should have triggered, so size should be smaller
+        (is (< size-after-26 initial-size))
+
+        ;; Verify search still works correctly
+        (is (= #{40} (f/search flex3 "longword-40")))
+        (is (= #{} (f/search flex3 "longword-10")))))))
+
+(deftest test-auto-gc-disabled-when-low-fragmentation
+  "Test that auto-GC doesn't trigger with low fragmentation"
+  (binding [f/*auto-gc-threshold* 0.3]
+    (let [data (into {} (map (fn [i] [i (str "word-" i)]) (range 50)))
+          flex (f/search-add (f/init) data)
+          initial-size (count (:index flex))]
+
+      ;; Remove only 10% of items (well below 30% threshold)
+      (let [flex2 (f/search-remove flex (range 0 5))
+            size-after-remove (count (:index flex2))]
+
+        ;; Auto-GC should NOT have triggered
+        (is (= initial-size size-after-remove))
+
+        ;; Index should still contain spaces (fragmentation present)
+        (let [space-count (count (filter #(= % \space) (:index flex2)))]
+          (is (> space-count 0)))))))
+
+(deftest test-batch-optimization-large-batch
+  "Test that large batch adds work correctly (StringBuilder optimization)"
+  (binding [f/*batch-threshold* 100]
+    (let [;; Create batch larger than threshold
+          large-batch (into {} (map (fn [i] [i (str "item-" i)]) (range 150)))
+          start (System/currentTimeMillis)
+          flex (f/search-add (f/init) large-batch)
+          time-taken (- (System/currentTimeMillis) start)]
+
+      ;; Should complete quickly
+      (is (< time-taken 500) "Large batch add should be fast")
+
+      ;; All items should be searchable (search for full "item-N" string)
+      (is (not (empty? (f/search flex "item"))))
+      (is (= 150 (count (f/search flex "item"))))
+      ;; Specific searches work
+      (is (contains? (f/search flex "item") 0))
+      (is (contains? (f/search flex "item") 75))
+      (is (contains? (f/search flex "item") 149))
+
+      ;; Should have all items indexed
+      (is (= 150 (count (:ids flex)))))))
+
+(deftest test-batch-optimization-small-batch
+  "Test that small batch adds work correctly (regular string concatenation)"
+  (binding [f/*batch-threshold* 100]
+    (let [;; Create batch smaller than threshold
+          small-batch (into {} (map (fn [i] [i (str "item-" i)]) (range 50)))
+          flex (f/search-add (f/init) small-batch)]
+
+      ;; All items should be searchable (search for full "item-N" string)
+      (is (not (empty? (f/search flex "item"))))
+      (is (= 50 (count (f/search flex "item"))))
+      ;; Specific searches work
+      (is (contains? (f/search flex "item") 0))
+      (is (contains? (f/search flex "item") 25))
+      (is (contains? (f/search flex "item") 49))
+
+      ;; Should have all items indexed
+      (is (= 50 (count (:ids flex)))))))
+
+(deftest test-search-result-limit
+  "Test that search limit parameter properly limits results"
+  (let [;; Create data where many items match
+        data (into {} (for [i (range 100)]
+                        [i (str "common-word-" i)]))
+        flex (f/search-add (f/init) data)]
+
+    ;; Without limit, should return all 100 matches
+    (let [results (f/search flex "common")]
+      (is (= 100 (count results))))
+
+    ;; With limit=10, should return exactly 10 results
+    (let [results (f/search flex "common" {:limit 10})]
+      (is (= 10 (count results)))
+      (is (set? results)))
+
+    ;; With limit=1, should return exactly 1 result
+    (let [results (f/search flex "common" {:limit 1})]
+      (is (= 1 (count results))))
+
+    ;; With limit=0, should return empty set
+    (let [results (f/search flex "common" {:limit 0})]
+      (is (= 0 (count results))))
+
+    ;; Limit larger than results should return all results
+    (let [results (f/search flex "word-50" {:limit 100})]
+      (is (= 1 (count results)))
+      (is (= #{50} results)))))
+
+(deftest test-search-limit-with-cache
+  "Test that search limit works correctly with caching"
+  (let [data (into {} (for [i (range 100)]
+                        [i (str "test-" i)]))
+        flex (f/search-add (f/init) data)]
+
+    ;; First search with limit=5 (cache miss)
+    (let [results1 (f/search flex "test" {:limit 5})]
+      (is (= 5 (count results1))))
+
+    ;; Second search with limit=5 (cache hit)
+    (let [results2 (f/search flex "test" {:limit 5})]
+      (is (= 5 (count results2))))
+
+    ;; Search without limit (should use same cache, but return different count)
+    (let [results3 (f/search flex "test")]
+      (is (= 100 (count results3))))
+
+    ;; Search with different limit (should use same cache)
+    (let [results4 (f/search flex "test" {:limit 10})]
+      (is (= 10 (count results4))))))
+
+(deftest test-dynamic-configuration
+  "Test that dynamic configuration parameters can be changed"
+  ;; Test changing cache size
+  (is (= 1000 f/*cache-size*)) ;; Default value
+  (binding [f/*cache-size* 500]
+    (is (= 500 f/*cache-size*)))
+
+  ;; Test changing auto-GC threshold
+  (is (= 0.3 f/*auto-gc-threshold*)) ;; Default 30%
+  (binding [f/*auto-gc-threshold* 0.5]
+    (is (= 0.5 f/*auto-gc-threshold*)))
+
+  ;; Test changing batch threshold
+  (is (= 100 f/*batch-threshold*)) ;; Default 100
+  (binding [f/*batch-threshold* 200]
+    (is (= 200 f/*batch-threshold*))))

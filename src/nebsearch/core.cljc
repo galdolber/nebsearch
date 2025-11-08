@@ -17,6 +17,34 @@
 
 (def join-char \ñ) ;; normalized to 'n' by encoder, ensures it never appears in indexed text
 
+;; Performance tuning parameters
+(def ^:dynamic *cache-size* 1000)  ;; Max cache entries (LRU)
+(def ^:dynamic *auto-gc-threshold* 0.3)  ;; Auto-GC when >30% fragmented
+(def ^:dynamic *batch-threshold* 100)  ;; Use StringBuilder for batches >100
+
+;; LRU Cache implementation
+(defn- lru-cache-evict [cache max-size]
+  (if (<= (count cache) max-size)
+    cache
+    (let [;; Remove oldest 20% when threshold exceeded
+          keep-count (long (* max-size 0.8))
+          sorted-entries (sort-by (comp :access-time val) > cache)]
+      (into {} (take keep-count sorted-entries)))))
+
+(defn- lru-cache-get [cache-atom key]
+  (let [cache @cache-atom
+        entry (get cache key)]
+    (when entry
+      (swap! cache-atom assoc-in [key :access-time] (System/currentTimeMillis))
+      (:value entry))))
+
+(defn- lru-cache-put [cache-atom key value]
+  (swap! cache-atom
+         (fn [cache]
+           (let [new-cache (assoc cache key {:value value
+                                              :access-time (System/currentTimeMillis)})]
+             (lru-cache-evict new-cache *cache-size*)))))
+
 (defn default-encoder [value]
   (when value
     (normalize (string/lower-case value))))
@@ -45,11 +73,24 @@
     (throw (ex-info "Invalid index position: join-char not found"
                     {:pos pos :index-length (count index)}))))
 
+;; Forward declaration for mutual recursion
+(declare search-gc)
+
+(defn- calculate-fragmentation [{:keys [index ids]}]
+  (if (or (empty? index) (zero? (count ids)))
+    0.0
+    (let [space-count (count (filter #(= % \space) index))
+          total-chars (count index)]
+      (/ (double space-count) total-chars))))
+
 (defn search-remove [{:keys [index data ids] :as flex} id-list]
   {:pre [(map? flex)
          (or (nil? id-list) (sequential? id-list))]}
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))]
-    (swap! (:cache (meta flex)) update-vals #(apply disj % id-list))
+    ;; Update cache entries to remove deleted IDs
+    (swap! (:cache (meta flex)) update-vals
+           (fn [entry]
+             (update entry :value #(apply disj % id-list))))
     (loop [[[pos :as pair] & ps] existing
            data (transient data)
            index index]
@@ -59,9 +100,14 @@
                  (str (subs index 0 pos)
                       (apply str (repeat len " "))
                       (subs index (+ pos len)))))
-        (assoc flex
-               :ids (apply dissoc ids id-list)
-               :data (persistent! data) :index index)))))
+        (let [result (assoc flex
+                            :ids (apply dissoc ids id-list)
+                            :data (persistent! data)
+                            :index index)]
+          ;; Auto-GC if fragmentation exceeds threshold
+          (if (> (calculate-fragmentation result) *auto-gc-threshold*)
+            (search-gc result)
+            result))))))
 
 (defn search-add [{:keys [ids] :as flex} pairs]
   {:pre [(map? flex)
@@ -82,10 +128,20 @@
               pair [pos id]]
           (recur ws (+ pos len 1) (conj! data pair) (conj! r w)
                  (assoc! ids id (first pair))))
-        (assoc flex
-               :ids (persistent! ids)
-               :index (str index (string/join join-char (persistent! r)) join-char)
-               :data (persistent! data))))))
+        (let [words (persistent! r)
+              ;; Optimization: Use StringBuilder for large batches (JVM only)
+              new-index #?(:clj (if (>= (count words) *batch-threshold*)
+                                  (let [sb (StringBuilder. index)]
+                                    (doseq [word words]
+                                      (.append sb word)
+                                      (.append sb join-char))
+                                    (.toString sb))
+                                  (str index (string/join join-char words) join-char))
+                           :cljs (str index (string/join join-char words) join-char))]
+          (assoc flex
+                 :ids (persistent! ids)
+                 :index new-index
+                 :data (persistent! data)))))))
 
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
@@ -104,38 +160,43 @@
           r)
         r))))
 
-(defn search [{:keys [index data] :as flex} search]
-  {:pre [(map? flex)]}
-  (if-not (and search data)
-    #{}
-    (let [cache (:cache (meta flex))
-          words (default-splitter (default-encoder search))]
-      (if (empty? words)
-        #{}
-        (or (get @cache words)
-            (let [result
-                  (apply
-                   sets/intersection
-                   (loop [[w & ws] (reverse (sort-by count words))
-                          r []
-                          min-pos 0
-                          max-pos (count index)]
-                     (if w
-                       (let [positions (find-positions index min-pos max-pos w)
-                             pairs (filterv some? (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
-                                                        positions))]
-                         (if (seq pairs)
-                           (let [new-min (long (apply min (map first pairs)))
-                                 new-max (long (reduce (fn [mx [pos _]]
-                                                         (max mx (+ pos (find-len index pos))))
-                                                       0
-                                                       pairs))]
-                             (recur ws (conj r (set (map last pairs)))
-                                    new-min new-max))
-                           (recur ws (conj r #{}) min-pos max-pos)))
-                       r)))]
-              (swap! cache assoc words result)
-              result))))))
+(defn search
+  ([flex search-query]
+   (search flex search-query nil))
+  ([{:keys [index data] :as flex} search-query {:keys [limit] :or {limit nil}}]
+   {:pre [(map? flex)]}
+   (if-not (and search-query data)
+     #{}
+     (let [cache (:cache (meta flex))
+           words (default-splitter (default-encoder search-query))]
+       (if (empty? words)
+         #{}
+         ;; Use LRU cache
+         (if-let [cached (lru-cache-get cache words)]
+           (if limit (set (take limit cached)) cached)
+           (let [result
+                 (apply
+                  sets/intersection
+                  (loop [[w & ws] (reverse (sort-by count words))
+                         r []
+                         min-pos 0
+                         max-pos (count index)]
+                    (if w
+                      (let [positions (find-positions index min-pos max-pos w)
+                            pairs (filterv some? (mapv (fn [i] (first (pss/rslice data [(inc i) nil] nil)))
+                                                       positions))]
+                        (if (seq pairs)
+                          (let [new-min (long (apply min (map first pairs)))
+                                new-max (long (reduce (fn [mx [pos _]]
+                                                        (max mx (+ pos (find-len index pos))))
+                                                      0
+                                                      pairs))]
+                            (recur ws (conj r (set (map last pairs)))
+                                   new-min new-max))
+                          (recur ws (conj r #{}) min-pos max-pos)))
+                      r)))]
+             (lru-cache-put cache words result)
+             (if limit (set (take limit result)) result))))))))
 
 (defn search-gc [{:keys [index data] :as flex}]
   (let [pairs (mapv (fn [[pos id :as pair]]
