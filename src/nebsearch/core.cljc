@@ -22,6 +22,11 @@
 (def ^:dynamic *auto-gc-threshold* 0.3)  ;; Auto-GC when >30% fragmented
 (def ^:dynamic *batch-threshold* 100)  ;; Use StringBuilder for batches >100
 
+;; Cross-platform timestamp function
+(defn- current-time-millis []
+  #?(:clj (System/currentTimeMillis)
+     :cljs (.now js/Date)))
+
 ;; LRU Cache implementation
 (defn- lru-cache-evict [cache max-size]
   (if (<= (count cache) max-size)
@@ -35,14 +40,14 @@
   (let [cache @cache-atom
         entry (get cache key)]
     (when entry
-      (swap! cache-atom assoc-in [key :access-time] (System/currentTimeMillis))
+      (swap! cache-atom assoc-in [key :access-time] (current-time-millis))
       (:value entry))))
 
 (defn- lru-cache-put [cache-atom key value]
   (swap! cache-atom
          (fn [cache]
            (let [new-cache (assoc cache key {:value value
-                                              :access-time (System/currentTimeMillis)})]
+                                              :access-time (current-time-millis)})]
              (lru-cache-evict new-cache *cache-size*)))))
 
 (defn default-encoder [value]
