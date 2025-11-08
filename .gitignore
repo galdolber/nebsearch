@@ -17,3 +17,9 @@ classes/
 core
 
 .lsp/sqlite.db
+
+# Node.js and ClojureScript testing
+node_modules/
+package.json
+package-lock.json
+shadow-cljs.edn
