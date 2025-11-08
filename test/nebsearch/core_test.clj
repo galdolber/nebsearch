@@ -204,3 +204,359 @@
         _ (is (= #{1} (f/search flex3 "apple")))
         _ (is (= #{3} (f/search flex3 "cherry")))
         _ (is (= #{} (f/search flex3 "banana")))]))  ;; removed
+
+;; Performance and stress tests
+
+(deftest test-large-dataset-performance
+  "Test performance with larger dataset"
+  (let [;; Create 1000 entries
+        large-data (into {} (map (fn [i] [i (str "item-" i "-test")]) (range 1000)))
+        start (System/currentTimeMillis)
+        flex (f/search-add (f/init) large-data)
+        add-time (- (System/currentTimeMillis) start)]
+
+    ;; Should build index quickly (< 1 second for 1000 items)
+    (is (< add-time 1000) "Adding 1000 items should take less than 1 second")
+
+    ;; Search should work
+    (is (= 1 (count (f/search flex "item-500-test"))))
+
+    ;; Multi-word search
+    (let [result (f/search flex "item test")]
+      (is (= 1000 (count result)) "All items should match 'item test'"))
+
+    ;; Partial search
+    (let [result (f/search flex "item-5")]
+      (is (>= (count result) 11) "Should find item-5, item-50, item-51...59, item-500...599"))))
+
+(deftest test-sequential-operations-performance
+  "Test many sequential add/remove operations"
+  (let [flex (f/init)]
+    ;; Add items one by one
+    (let [flex2 (reduce (fn [f i]
+                          (f/search-add f {i (str "entry-" i)}))
+                        flex
+                        (range 100))]
+      (is (= 100 (count (:ids flex2))))
+
+      ;; Remove half
+      (let [flex3 (f/search-remove flex2 (range 0 50))]
+        (is (= 50 (count (:ids flex3))))
+
+        ;; Verify only second half remains
+        (is (= #{50} (f/search flex3 "entry-50")))
+        (is (= #{} (f/search flex3 "entry-25")))))))
+
+(deftest test-cache-effectiveness
+  "Test that cache improves repeated searches"
+  (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 1000))))
+        cache (:cache (meta flex))]
+
+    ;; First search - cache miss
+    (is (= {} @cache))
+    (f/search flex "500")
+    (is (= 1 (count @cache)))
+
+    ;; Different search - another cache entry
+    (f/search flex "600")
+    (is (= 2 (count @cache)))
+
+    ;; Multi-word search creates combined cache entry
+    (f/search flex "500 600")
+    (is (= 3 (count @cache)))
+
+    ;; Verify cache contains expected keys
+    (is (contains? @cache #{"500"}))
+    (is (contains? @cache #{"600"}))
+    (is (contains? @cache #{"500" "600"}))))
+
+(deftest test-gc-effectiveness
+  "Test that GC actually reduces index size"
+  (let [data (into {} (map (fn [i] [i (str "unique-" i "-" (apply str (repeat 50 \x)))]) (range 100)))
+        flex (f/search-add (f/init) data)
+        initial-size (count (:index flex))]
+
+    ;; Remove 50% of items
+    (let [flex2 (f/search-remove flex (range 0 50))
+          fragmented-size (count (:index flex2))]
+
+      ;; Size should be same (spaces instead of removed items)
+      (is (= initial-size fragmented-size))
+
+      ;; After GC, size should be smaller
+      (let [flex3 (f/search-gc flex2)
+            compacted-size (count (:index flex3))]
+
+        (is (< compacted-size fragmented-size))
+        (is (< compacted-size (* initial-size 0.6))) ;; Should be ~50% + overhead
+
+        ;; Verify search still works
+        (is (= #{50} (f/search flex3 "unique-50")))
+        (is (= #{} (f/search flex3 "unique-25")))))))
+
+(deftest test-unicode-handling
+  "Test handling of unicode characters"
+  (let [unicode-data {1 "café"
+                      2 "naïve"
+                      3 "résumé"
+                      4 "münchen"
+                      5 "日本語"
+                      6 "emoji😀test"}
+        flex (f/search-add (f/init) unicode-data)]
+
+    ;; Accented characters should be normalized
+    (is (= #{1} (f/search flex "cafe")))
+    (is (= #{2} (f/search flex "naive")))
+    (is (= #{3} (f/search flex "resume")))
+    (is (= #{4} (f/search flex "munchen")))
+
+    ;; Non-latin scripts
+    (is (set? (f/search flex "日本語")))
+    (is (set? (f/search flex "emoji😀test")))))
+
+(deftest test-empty-and-whitespace
+  "Test various empty and whitespace scenarios"
+  (let [flex (f/search-add (f/init) {1 "test" 2 "  spaced  " 3 "tab\ttab"})]
+
+    ;; Empty searches
+    (is (= #{} (f/search flex "")))
+    (is (= #{} (f/search flex "   ")))
+    (is (= #{} (f/search flex "\t\t")))
+    (is (= #{} (f/search flex "\n")))
+
+    ;; Whitespace in data should be normalized
+    (is (= #{2} (f/search flex "spaced")))
+    (is (= #{3} (f/search flex "tab")))))
+
+(deftest test-very-long-strings
+  "Test handling of very long strings"
+  (let [long-string (apply str (repeat 10000 "a"))
+        flex (f/search-add (f/init) {1 long-string 2 "short"})]
+
+    ;; Should handle long strings
+    (is (= #{1} (f/search flex "aaa")))
+    (is (= #{2} (f/search flex "short")))
+
+    ;; Search for long query
+    (let [long-query (apply str (repeat 100 "a"))]
+      (is (= #{1} (f/search flex long-query))))))
+
+(deftest test-special-characters
+  "Test handling of special characters"
+  (let [flex (f/search-add (f/init)
+                           {1 "hello@world.com"
+                            2 "user+tag@email.com"
+                            3 "path/to/file.txt"
+                            4 "c++programming"
+                            5 "version-2.0.1"
+                            6 "100%complete"
+                            7 "$$$money$$$"})]
+
+    ;; Special chars should split words
+    (is (= #{1} (f/search flex "hello")))
+    (is (= #{1} (f/search flex "world")))
+    ;; "com" appears in multiple entries
+    (is (= #{1 2 6} (f/search flex "com")))
+
+    ;; Plus is kept
+    (is (not (empty? (f/search flex "c++"))))
+
+    ;; Dots are kept
+    (is (not (empty? (f/search flex "2.0.1"))))
+
+    ;; Numbers work
+    (is (= #{5} (f/search flex "2.0.1")))))
+
+(deftest test-boundary-conditions
+  "Test boundary conditions"
+  (let [flex (f/init)]
+
+    ;; Empty index
+    (is (= "" (:index flex)))
+    (is (= 0 (count (:ids flex))))
+    (is (= 0 (count (:data flex))))
+
+    ;; Single item
+    (let [flex1 (f/search-add flex {1 "a"})]
+      (is (= #{1} (f/search flex1 "a")))
+
+      ;; Remove single item
+      (let [flex2 (f/search-remove flex1 [1])]
+        (is (= 0 (count (:ids flex2))))
+        (is (= #{} (f/search flex2 "a")))))
+
+    ;; Add same ID multiple times (should update)
+    (let [flex3 (f/search-add flex {1 "first"})
+          flex4 (f/search-add flex3 {1 "second"})]
+      (is (= 1 (count (:ids flex4))))
+      (is (= #{} (f/search flex4 "first")))
+      (is (= #{1} (f/search flex4 "second"))))))
+
+(deftest test-update-patterns
+  "Test various update patterns"
+  (let [flex (f/search-add (f/init) {1 "alpha" 2 "beta" 3 "gamma"})]
+
+    ;; Bulk update - "alpha" substring will match "alpha2"
+    (let [flex2 (f/search-add flex {1 "delta" 2 "epsilon"})]
+      (is (= #{} (f/search flex2 "alpha")))
+      (is (= #{1} (f/search flex2 "delta")))
+      (is (= #{2} (f/search flex2 "epsilon")))
+      (is (= #{3} (f/search flex2 "gamma"))))
+
+    ;; Interleaved add/remove
+    (let [flex3 (-> flex
+                    (f/search-remove [2])
+                    (f/search-add {4 "delta"})
+                    (f/search-remove [3])
+                    (f/search-add {5 "epsilon"}))]
+      (is (= #{1 4 5} (set (keys (:ids flex3)))))
+      (is (= #{1} (f/search flex3 "alpha")))
+      (is (= #{4} (f/search flex3 "delta")))
+      (is (= #{5} (f/search flex3 "epsilon"))))))
+
+(deftest test-search-result-accuracy
+  "Test search result accuracy with complex queries"
+  (let [flex (f/search-add (f/init)
+                           {1 "the quick brown fox"
+                            2 "the lazy dog"
+                            3 "quick brown dog"
+                            4 "the fox and the dog"})]
+
+    ;; Single word
+    (is (= #{1 2 4} (f/search flex "the")))
+    (is (= #{1 3} (f/search flex "quick")))
+
+    ;; Two words (intersection)
+    (is (= #{1} (f/search flex "quick fox")))
+    (is (= #{2 4} (f/search flex "the dog")))
+    (is (= #{3} (f/search flex "quick dog")))
+
+    ;; Three words
+    (is (= #{1} (f/search flex "the quick fox")))
+    (is (= #{} (f/search flex "the quick lazy"))))) ;; no match
+
+(deftest test-serialization-roundtrip
+  "Test serialization doesn't lose data"
+  (let [original (f/search-add (f/init)
+                               (into {} (map-indexed vector (range 100))))
+        serialized (f/serialize original)
+        deserialized (f/deserialize serialized)]
+
+    ;; Verify structure
+    (is (= (count (:ids original)) (count (:ids deserialized))))
+    (is (= (count (:data original)) (count (:data deserialized))))
+
+    ;; Verify searches work identically
+    (is (= (f/search original "50") (f/search deserialized "50")))
+    (is (= (f/search original "25") (f/search deserialized "25")))
+
+    ;; Verify can add after deserialize
+    (let [after-add (f/search-add deserialized {100 "new"})]
+      (is (= #{100} (f/search after-add "new"))))))
+
+(deftest test-id-types
+  "Test various ID types"
+  (let [flex (f/search-add (f/init)
+                           {1 "number-id"
+                            "string-id" "string-key"
+                            :keyword-id "keyword-key"
+                            [1 2] "vector-id"})]
+
+    ;; All ID types should work
+    (is (= #{1} (f/search flex "number")))
+    (is (= #{"string-id"} (f/search flex "string-key")))
+    (is (= #{:keyword-id} (f/search flex "keyword")))
+    (is (= #{[1 2]} (f/search flex "vector")))))
+
+(deftest test-index-fragmentation
+  "Test index fragmentation after many operations"
+  (let [flex (f/search-add (f/init) (into {} (map-indexed vector (range 100))))]
+
+    ;; Remove every other item
+    (let [flex2 (f/search-remove flex (range 0 100 2))
+          fragmented-index (:index flex2)]
+
+      ;; Index should contain spaces (fragmentation)
+      (is (> (count fragmented-index) 0))
+
+      ;; Count spaces (fragmentation)
+      (let [space-count (count (filter #(= % \space) fragmented-index))]
+        (is (> space-count 0) "Should have spaces from removed items"))
+
+      ;; After GC, should have fewer/no spaces in content
+      (let [flex3 (f/search-gc flex2)
+            compacted-index (:index flex3)]
+
+        ;; Should be more compact
+        (is (< (count compacted-index) (count fragmented-index)))))))
+
+(deftest test-empty-values
+  "Test handling of empty and nil values"
+  (let [flex (f/init)]
+
+    ;; Empty string value
+    (let [flex1 (f/search-add flex {1 ""})]
+      ;; Empty values encode to nothing
+      (is (= #{} (f/search flex1 ""))))
+
+    ;; Nil value
+    (let [flex2 (f/search-add flex {2 nil})]
+      ;; Nil should be handled gracefully
+      (is (map? flex2)))))
+
+(deftest test-case-sensitivity
+  "Verify searches are case-insensitive"
+  (let [flex (f/search-add (f/init)
+                           {1 "UPPERCASE"
+                            2 "lowercase"
+                            3 "MixedCase"})]
+
+    ;; All these should match
+    (is (= #{1} (f/search flex "uppercase")))
+    (is (= #{1} (f/search flex "UPPERCASE")))
+    (is (= #{2} (f/search flex "LOWERCASE")))
+    (is (= #{2} (f/search flex "lowercase")))
+    (is (= #{3} (f/search flex "mixedcase")))
+    (is (= #{3} (f/search flex "MIXEDCASE")))))
+
+(deftest test-word-boundaries
+  "Test that searches respect word boundaries correctly"
+  (let [flex (f/search-add (f/init)
+                           {1 "cat"
+                            2 "category"
+                            3 "wildcat"
+                            4 "scattered"})]
+
+    ;; "cat" should match all items containing "cat" as substring
+    (is (= #{1 2 3 4} (f/search flex "cat")))))
+
+(deftest test-duplicate-words
+  "Test handling of duplicate words in text"
+  (let [flex (f/search-add (f/init)
+                           {1 "hello hello world"
+                            2 "hello world"
+                            3 "world world"})]
+
+    ;; Should match regardless of duplicates
+    (is (= #{1 2} (f/search flex "hello")))
+    (is (= #{1 2 3} (f/search flex "world")))
+    (is (= #{1 2} (f/search flex "hello world")))))
+
+(deftest test-performance-many-ids
+  "Test performance characteristics with many IDs"
+  (let [;; Create data with shared substrings
+        data (into {} (for [i (range 500)]
+                        [i (str "common-prefix-" i "-suffix")]))
+        flex (f/search-add (f/init) data)]
+
+    ;; Search for common term - should return many results
+    (let [results (f/search flex "common")]
+      (is (= 500 (count results))))
+
+    ;; Search for specific term - should return one result
+    (let [results (f/search flex "prefix-250")]
+      (is (= #{250} results)))
+
+    ;; Multi-word with common term should still work
+    (let [results (f/search flex "common prefix-250")]
+      (is (= #{250} results)))))
