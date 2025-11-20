@@ -115,16 +115,29 @@
     (disj data entry)))
 
 (defn- data-rslice [data start-entry end-entry durable?]
-  "Get range from data structure"
+  "Get range from data structure - returns BACKWARDS iterator like pss/rslice
+
+   rslice behavior:
+   - (rslice data from to) returns backwards iterator where from <= X <= to
+   - (rslice data from nil) returns backwards iterator where X <= from
+
+   This matches pss/rslice exactly for compatibility."
   (if durable?
-    ;; For B-tree, match rslice behavior exactly:
-    ;; Return entries where start-entry <= entry < end-entry
-    ;; Use bt-seq to get all entries, then filter
-    ;; (This is slower but ensures correct behavior)
+    ;; For B-tree, match rslice behavior:
+    ;; - When end-entry is nil: return entries where X <= start-entry, largest first
+    ;; - When end-entry is not nil: return entries where end-entry <= X <= start-entry, largest first
     (let [all-entries (bt/bt-seq data)]
       (cond->> all-entries
-        start-entry (filter #(>= (compare % start-entry) 0))
-        end-entry (filter #(< (compare % end-entry) 0))))
+        ;; Filter by range
+        (and start-entry (not end-entry))
+        (filter #(<= (compare % start-entry) 0))
+
+        (and start-entry end-entry)
+        (filter #(and (<= (compare % start-entry) 0)
+                      (>= (compare % end-entry) 0)))
+
+        ;; Reverse to make it backwards
+        true (reverse)))
     (pss/rslice data start-entry end-entry)))
 
 (defn serialize [flex]
@@ -315,10 +328,12 @@
                    (str (subs index 0 pos)
                         (apply str (repeat len " "))
                         (subs index (+ pos len)))))
-          (let [result (assoc flex
-                              :ids (apply dissoc ids id-list)
-                              :data data
-                              :index index)]
+          ;; Create new version with its own cache to preserve COW semantics
+          (let [result (-> (assoc flex
+                                  :ids (apply dissoc ids id-list)
+                                  :data data
+                                  :index index)
+                           (vary-meta assoc :cache (atom {})))]
             ;; Auto-GC if fragmentation exceeds threshold
             (if (> (calculate-fragmentation result) *auto-gc-threshold*)
               (search-gc result)
@@ -333,10 +348,12 @@
                    (str (subs index 0 pos)
                         (apply str (repeat len " "))
                         (subs index (+ pos len)))))
-          (let [result (assoc flex
-                              :ids (apply dissoc ids id-list)
-                              :data (persistent! data)
-                              :index index)]
+          ;; Create new version with its own cache to preserve COW semantics
+          (let [result (-> (assoc flex
+                                  :ids (apply dissoc ids id-list)
+                                  :data (persistent! data)
+                                  :index index)
+                           (vary-meta assoc :cache (atom {})))]
             ;; Auto-GC if fragmentation exceeds threshold
             (if (> (calculate-fragmentation result) *auto-gc-threshold*)
               (search-gc result)
@@ -350,7 +367,7 @@
         {:keys [ids ^String index data] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)
         durable? (durable-mode? flex)]
-    (reset! (:cache (meta flex)) {})
+    ;; No need to reset cache - each version gets its own cache via vary-meta
     (if durable?
       ;; Durable mode - no transients
       (loop [[[id w] & ws] pairs
@@ -373,10 +390,12 @@
                                       (.toString sb))
                                     (str index (string/join join-char words) join-char))
                              :cljs (str index (string/join join-char words) join-char))]
-            (assoc flex
-                   :ids ids
-                   :index new-index
-                   :data data))))
+            ;; Create new version with its own cache to preserve COW semantics
+            (-> (assoc flex
+                       :ids ids
+                       :index new-index
+                       :data data)
+                (vary-meta assoc :cache (atom {}))))))
       ;; In-memory mode - use transients for performance
       (loop [[[id w] & ws] pairs
              pos #?(:clj (.length index) :cljs (.-length index))
@@ -399,10 +418,12 @@
                                       (.toString sb))
                                     (str index (string/join join-char words) join-char))
                              :cljs (str index (string/join join-char words) join-char))]
-            (assoc flex
-                   :ids (persistent! ids)
-                   :index new-index
-                   :data (persistent! data))))))))
+            ;; Create new version with its own cache to preserve COW semantics
+            (-> (assoc flex
+                       :ids (persistent! ids)
+                       :index new-index
+                       :data (persistent! data))
+                (vary-meta assoc :cache (atom {})))))))))
 
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs

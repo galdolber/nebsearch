@@ -320,16 +320,15 @@
 
              (let [result (insert-into-node (:root-offset btree) [])]
                (if-not (:split result)
-                 ;; No split at root, just update header
-                 (let [new-root (:offset result)]
-                   (write-header raf new-root (inc (:node-count (read-header raf))))
-                   (assoc btree :root-offset new-root))
+                 ;; No split at root, return new btree with updated root
+                 ;; DON'T write header - that breaks COW! Header only written on serialize/flush
+                 (assoc btree :root-offset (:offset result))
                  ;; Root split, create new root
                  (let [split (:split result)
                        new-root (internal-node [(:key split)]
                                                [(:offset result) (:right-offset split)])
                        new-root-offset (write-node raf new-root)]
-                   (write-header raf new-root-offset (+ 2 (:node-count (read-header raf))))
+                   ;; DON'T write header - return new btree with new root offset
                    (assoc btree :root-offset new-root-offset))))))))
 
      (defn- bt-delete-impl [btree entry]
@@ -363,7 +362,7 @@
                                new-node (internal-node keys new-children)]
                            (write-node raf new-node)))))]
              (let [new-root-offset (delete-from-node (:root-offset btree))]
-               (write-header raf new-root-offset (:node-count (read-header raf)))
+               ;; DON'T write header - that breaks COW! Header only written on serialize/flush
                (assoc btree :root-offset new-root-offset))))))
 
      (defn open-btree
@@ -388,17 +387,33 @@
        (when-let [raf (:raf btree)]
          (.close ^RandomAccessFile raf)))
 
+     (defn- count-nodes [btree]
+       "Count total number of nodes in the tree by traversal"
+       (if-not (:root-offset btree)
+         0
+         (let [visited (atom #{})
+               raf (:raf btree)
+               cache (:node-cache btree)]
+           (letfn [(visit-node [offset]
+                     (when-not (@visited offset)
+                       (swap! visited conj offset)
+                       (let [node (read-node raf offset cache)]
+                         (when (= (:type node) :internal)
+                           (doseq [child (:children node)]
+                             (visit-node child))))))]
+             (visit-node (:root-offset btree))
+             (count @visited)))))
+
      (defn btree-stats [btree]
        "Get statistics about the B-tree"
        (if (instance? InMemoryBTree btree)
          {:type :in-memory
           :size (count (:data btree))}
-         (let [header (read-header (:raf btree))]
-           {:type :durable
-            :root-offset (:root-offset header)
-            :node-count (:node-count header)
-            :cache-size (count @(:node-cache btree))
-            :file-size (.length ^RandomAccessFile (:raf btree))})))
+         {:type :durable
+          :root-offset (:root-offset btree)
+          :node-count (count-nodes btree)
+          :cache-size (count @(:node-cache btree))
+          :file-size (.length ^RandomAccessFile (:raf btree))}))
 
      (defn btree-flush [btree]
        "Ensure all data is written to disk"
