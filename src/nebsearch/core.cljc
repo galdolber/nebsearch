@@ -178,8 +178,8 @@
       :else
       (let [;; Create a B-tree with the target storage
             btree (bt/open-btree storage)
-            ;; Extract all entries from current B-tree (or other data structure)
-            entries (vec data)
+            ;; Extract all entries from current B-tree using bt-seq
+            entries (vec (bt/bt-seq data))
             btree-with-data (if (seq entries)
                               (bt/bt-bulk-insert btree entries)
                               btree)
