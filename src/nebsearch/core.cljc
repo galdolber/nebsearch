@@ -544,18 +544,18 @@
                       (if w
                         (let [positions (find-positions index min-pos max-pos w)
                               ;; ✨ MAGIC: Binary search instead of B-tree lookups! ✨
-                              doc-ids (keep #(find-doc-at-pos pos-boundaries %) positions)]
+                              doc-ids (keep #(find-doc-at-pos pos-boundaries %) positions)
+                              doc-id-set (set doc-ids)] ;; Convert to set for O(1) lookup
                           (if (seq doc-ids)
                             ;; Narrow search range based on matches
-                            (let [matching-bounds (filter (fn [[pos id _]]
-                                                           (some #(= id %) doc-ids))
+                            (let [matching-bounds (filter (fn [[_ id _]] (contains? doc-id-set id))
                                                          pos-boundaries)
                                   new-min (long (apply min (map first matching-bounds)))
                                   new-max (long (reduce (fn [mx [pos _ len]]
                                                          (max mx (+ pos len)))
                                                        0
                                                        matching-bounds))]
-                              (recur ws (conj r (set doc-ids))
+                              (recur ws (conj r doc-id-set)
                                      new-min new-max))
                             ;; No matches
                             (recur ws (conj r #{}) min-pos max-pos)))
