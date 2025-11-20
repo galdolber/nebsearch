@@ -117,12 +117,14 @@
 (defn- data-rslice [data start-entry end-entry durable?]
   "Get range from data structure"
   (if durable?
-    ;; For B-tree, get the range starting from start-entry
-    ;; The search function uses this to find the first entry >= position
-    (let [start-pos (first start-entry)
-          results (bt/bt-range data start-pos (when end-entry (first end-entry)))]
-      ;; Filter to ensure we get entries >= start-entry (including the id part)
-      (filter #(>= (compare % start-entry) 0) results))
+    ;; For B-tree, match rslice behavior exactly:
+    ;; Return entries where start-entry <= entry < end-entry
+    ;; Use bt-seq to get all entries, then filter
+    ;; (This is slower but ensures correct behavior)
+    (let [all-entries (bt/bt-seq data)]
+      (cond->> all-entries
+        start-entry (filter #(>= (compare % start-entry) 0))
+        end-entry (filter #(< (compare % end-entry) 0))))
     (pss/rslice data start-entry end-entry)))
 
 (defn serialize [flex]

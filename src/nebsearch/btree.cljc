@@ -258,7 +258,8 @@
                          :leaf
                          ;; Insert into leaf
                          (let [entries (:entries node)
-                               new-entries (vec (sort-by first (conj entries entry)))]
+                               ;; Sort by full entry [pos id], not just position
+                               new-entries (vec (sort (conj entries entry)))]
                            (if (<= (count new-entries) leaf-capacity)
                              ;; Fits in leaf, write new version
                              (let [new-leaf (leaf-node new-entries (:next-leaf node))
