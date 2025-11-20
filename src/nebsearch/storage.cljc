@@ -45,26 +45,6 @@
 
     Note: Implementations should cache restored nodes for performance."))
 
-(defprotocol IStorageMetadata
-  "Optional protocol for storage implementations that need to persist metadata.
-
-  This handles:
-  - Index string (concatenated normalized search tokens)
-  - IDs map (id -> position lookup)
-  - Version information"
-
-  (store-metadata [this metadata]
-    "Store metadata (index string, ids map, version info).
-
-    Parameters:
-    - metadata: {:index string, :ids map, :version number, :timestamp millis}")
-
-  (restore-metadata [this]
-    "Restore metadata from storage.
-
-    Returns:
-    - metadata map or nil if not found"))
-
 (defprotocol IStorageRoot
   "Protocol for managing root offset in storage.
 

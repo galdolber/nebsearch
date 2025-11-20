@@ -12,8 +12,7 @@
 
 (defrecord MemoryStorage [*storage     ;; atom: {address -> node-edn-string}
                           *counter     ;; atom: monotonic counter for addresses
-                          *root-offset ;; atom: current root address
-                          *metadata]   ;; atom: metadata map
+                          *root-offset] ;; atom: current root address
   storage/IStorage
   (store [this node]
     "Store a node in memory and return a unique address"
@@ -41,16 +40,6 @@
     "Get the current root offset from storage"
     @*root-offset)
 
-  storage/IStorageMetadata
-  (store-metadata [this metadata]
-    "Store metadata in memory"
-    (reset! *metadata metadata)
-    metadata)
-
-  (restore-metadata [this]
-    "Restore metadata from memory"
-    @*metadata)
-
   storage/IStorageSave
   (save [this]
     "No-op for memory storage (already 'saved')"
@@ -76,5 +65,4 @@
   []
   (->MemoryStorage (atom {})       ;; empty storage
                    (atom 0)        ;; counter starts at 0
-                   (atom nil)      ;; no root yet
-                   (atom nil)))    ;; no metadata yet
+                   (atom nil)))    ;; no root yet

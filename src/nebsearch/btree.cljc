@@ -404,13 +404,7 @@
          ;; Explicitly save if it supports IStorageSave
          (when (satisfies? storage/IStorageSave stor)
            (storage/save stor)))
-       btree)
-
-     ;; Deprecated alias for backward compatibility
-     (defn btree-flush [btree]
-       "DEPRECATED: Use btree-save instead.
-        Explicitly save the B-tree state to storage."
-       (btree-save btree))))
+       btree)))
 
 ;; ClojureScript stubs (not implemented yet)
 #?(:cljs
@@ -423,7 +417,4 @@
 
      (defn btree-stats [btree]
        {:type :in-memory
-        :size (count (:data btree))})
-
-     (defn btree-flush [btree]
-       nil)))
+        :size (count (:data btree))})))
