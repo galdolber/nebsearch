@@ -23,3 +23,9 @@ node_modules/
 package.json
 package-lock.json
 shadow-cljs.edn
+
+# Manual testing without Maven
+lib/
+.libs/
+persistent-sorted-set-src/
+*.jar
