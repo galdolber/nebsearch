@@ -322,7 +322,7 @@
                                 :pos-boundaries updated-pos-boundaries)
                          (vary-meta assoc :cache new-cache))]
           ;; Auto-GC disabled for durable mode - could break COW file semantics
-          result))))))
+          result)))))
 
 (defn search-add [{:keys [ids pos-boundaries] :as flex} pairs]
   {:pre [(map? flex)
@@ -358,7 +358,7 @@
                      :index new-index
                      :data new-data
                      :pos-boundaries updated-pos-boundaries)
-              (vary-meta assoc :cache (atom {}))))))))))
+              (vary-meta assoc :cache (atom {}))))))))
 
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
@@ -416,7 +416,7 @@
                                      new-min new-max))
                             ;; No matches
                             (recur ws (conj r #{}) min-pos max-pos)))
-                        r))))]
+                        r)))]
              (lru-cache-put cache words result)
              (if limit (set (take limit result)) result))))))))
 
