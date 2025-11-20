@@ -18,7 +18,8 @@
     "Store a node in memory and return a unique address"
     (let [address (swap! *counter inc)
           ;; Serialize to EDN string (simulates disk serialization)
-          node-edn (pr-str (dissoc node :offset :cached))]
+          ;; Remove non-serializable fields: offset, cached, storage, root-offset
+          node-edn (pr-str (dissoc node :offset :cached :storage :root-offset))]
       (swap! *storage assoc address node-edn)
       address))
 

@@ -111,10 +111,9 @@
                         (:node-count stats)
                         (format-bytes (:size-bytes stats))))))
 
-    ;; Durable with Disk Storage (only up to 10K for speed)
-    (when (<= n 10000)
-      (cleanup-temp-files)
-      (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
+    ;; Durable with Disk Storage
+    (cleanup-temp-files)
+    (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
             {:keys [duration result]} (measure-time
                                        (fn []
                                          (let [idx (reduce (fn [idx doc]
@@ -128,7 +127,7 @@
         (let [stats (storage/storage-stats storage)]
           (println (format "    Storage: %s on disk"
                           (format-bytes (:file-size stats)))))
-        (storage/close storage))))
+        (storage/close storage)))
   (println))
 
 ;; ============================================================================
@@ -168,10 +167,9 @@
                       (format-duration duration)
                       (/ (* 100 1e9) duration))))
 
-    ;; Durable with Disk Storage (only up to 10K)
-    (when (<= n 10000)
-      (cleanup-temp-files)
-      (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
+    ;; Durable with Disk Storage
+    (cleanup-temp-files)
+    (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
             idx (reduce (fn [idx doc] (neb/search-add idx [doc]))
                        (neb/init)
                        docs)
@@ -184,7 +182,7 @@
         (println (format "  Durable (Disk Store):  %15s  (%.0f queries/sec)"
                         (format-duration duration)
                         (/ (* 100 1e9) duration)))
-        (storage/close storage))))
+        (storage/close storage)))
   (println))
 
 ;; ============================================================================
@@ -192,7 +190,7 @@
 (println "4. UPDATE OPERATIONS (updating 10% of documents)")
 (println "═══════════════════════════════════════════════════════════════════════\n")
 
-(doseq [n [100 1000 10000]]
+(doseq [n [100 1000 10000 100000]]
   (println (format "--- %d documents, updating %d ---" n (quot n 10)))
   (let [docs (generate-docs n)
         updates (mapv (fn [i]
@@ -229,7 +227,7 @@
 (println "5. DELETE OPERATIONS (removing 10% of documents)")
 (println "═══════════════════════════════════════════════════════════════════════\n")
 
-(doseq [n [100 1000 10000]]
+(doseq [n [100 1000 10000 100000]]
   (println (format "--- %d documents, deleting %d ---" n (quot n 10)))
   (let [docs (generate-docs n)
         to-delete (mapv #(str "doc" %) (range 0 (quot n 10)))]
@@ -283,10 +281,9 @@
                                   (neb/restore storage ref)))]
         (println (format "  Restore (Memory):      %15s" (format-duration duration)))))
 
-    ;; Store to Disk Storage (only up to 10K)
-    (when (<= n 10000)
-      (cleanup-temp-files)
-      (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
+    ;; Store to Disk Storage
+    (cleanup-temp-files)
+    (let [storage (disk-storage/open-disk-storage "/tmp/bench-disk" 128 true)
             {:keys [duration]} (measure-time
                                 (fn []
                                   (neb/store idx storage)))]
@@ -298,7 +295,7 @@
                                   (fn []
                                     (neb/restore storage ref)))]
           (println (format "  Restore (Disk):        %15s" (format-duration duration))))
-        (storage/close storage))))
+        (storage/close storage)))
   (println))
 
 ;; ============================================================================
