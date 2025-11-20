@@ -4,7 +4,8 @@
             [clojure.set :as sets]
             [me.tonsky.persistent-sorted-set :as pss]
             [nebsearch.btree :as bt]
-            [nebsearch.metadata :as meta]))
+            [nebsearch.metadata :as meta]
+            #?(:clj [nebsearch.disk-storage :as disk-storage])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -81,15 +82,17 @@
               (throw (ex-info "index-path required for durable mode" {})))
             ;; Initialize metadata
             (meta/initialize-metadata index-path)
-            ;; Create metadata with version tracking
-            ^{:cache (atom {})
-              :durable? true
-              :index-path index-path
-              :version 0}
-            {:data (bt/open-btree index-path true)
-             :index ""
-             :ids {}
-             :pos-boundaries []})
+            ;; Create disk storage
+            (let [storage (disk-storage/open-disk-storage index-path bt/btree-order true)]
+              ;; Create metadata with version tracking
+              ^{:cache (atom {})
+                :durable? true
+                :index-path index-path
+                :version 0}
+              {:data (bt/open-btree storage)
+               :index ""
+               :ids {}
+               :pos-boundaries []}))
           :cljs
           (throw (ex-info "Durable mode not supported in ClojureScript" {})))
        ;; In-memory mode (default)
@@ -158,8 +161,8 @@
                current-version (or (:version (clojure.core/meta flex)) 0)
                new-version (inc current-version)
                root-offset (get-in (bt/btree-stats (:data flex)) [:root-offset])]
-           ;; Write B-tree to disk
-           (bt/btree-flush (:data flex))
+           ;; Explicitly save B-tree to disk
+           (bt/btree-save (:data flex))
            ;; Write metadata (index string and ids map)
            (meta/write-metadata index-path
                                 {:index (:index flex)
@@ -682,8 +685,9 @@
                               (last (meta/read-version-log index-path)))
                loaded-version (:version metadata)]
 
-           ;; Open B-tree
-           (let [btree (bt/open-btree index-path false)
+           ;; Open B-tree with disk storage
+           (let [storage (disk-storage/open-disk-storage index-path bt/btree-order false)
+                 btree (bt/open-btree storage)
                  pos-boundaries (build-pos-boundaries (:ids metadata) (:index metadata))]
              ^{:cache (atom {})
                :durable? true

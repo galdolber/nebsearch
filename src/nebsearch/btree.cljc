@@ -5,9 +5,11 @@
   - Copy-on-Write (COW) semantics for structural sharing
   - Lazy node loading - only loads nodes from disk when needed
   - Dual mode: in-memory or disk-backed
+  - Pluggable storage via IStorage protocol
   - Compatible with persistent-sorted-set API for [position id] pairs"
   (:require [clojure.java.io :as io]
-            [clojure.edn :as edn])
+            [clojure.edn :as edn]
+            [nebsearch.storage :as storage])
   #?(:clj (:import [java.io RandomAccessFile File]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32])))
@@ -70,95 +72,14 @@
   "Create an in-memory B-tree from a persistent sorted set"
   (->InMemoryBTree sorted-set))
 
-;; File-backed B-tree with lazy loading
+;; File-backed B-tree with lazy loading via pluggable storage
 #?(:clj
    (do
-     (defn- crc32 [^bytes data]
-       "Calculate CRC32 checksum"
-       (let [crc (CRC32.)]
-         (.update crc data)
-         (.getValue crc)))
-
-     (defn- serialize-node [node]
-       "Serialize node to EDN bytes"
-       (let [edn-str (pr-str (dissoc node :offset :cached))
-             bytes (.getBytes edn-str "UTF-8")]
-         bytes))
-
-     (defn- deserialize-node [^bytes data offset]
-       "Deserialize node from EDN bytes"
-       (let [edn-str (String. data "UTF-8")
-             node (edn/read-string edn-str)]
-         (assoc node :offset offset)))
-
-     (defn- write-header [^RandomAccessFile raf root-offset node-count]
-       "Write file header"
-       (.seek raf 0)
-       (.writeBytes raf magic-number)
-       (.writeInt raf 1) ;; version
-       (.writeLong raf (or root-offset -1))
-       (.writeLong raf (or node-count 0))
-       (.writeLong raf -1) ;; free list head (unused for now)
-       (.writeInt raf btree-order)
-       ;; Pad to header-size
-       (let [written (+ 8 4 8 8 8 4)
-             padding (- header-size written)]
-         (dotimes [_ padding]
-           (.writeByte raf 0))))
-
-     (defn- read-header [^RandomAccessFile raf]
-       "Read file header, returns {:root-offset, :node-count, :order}"
-       (.seek raf 0)
-       (let [magic (byte-array 8)]
-         (.read raf magic)
-         (when (not= (String. magic "UTF-8") magic-number)
-           (throw (ex-info "Invalid magic number" {:magic (String. magic "UTF-8")}))))
-       (let [version (.readInt raf)
-             root-offset (.readLong raf)
-             node-count (.readLong raf)
-             _ (.readLong raf) ;; free list
-             order (.readInt raf)]
-         {:version version
-          :root-offset (when (>= root-offset 0) root-offset)
-          :node-count node-count
-          :order order}))
-
-     (defn- write-node [^RandomAccessFile raf node]
-       "Write node to file, returns offset where it was written"
-       (let [offset (.length raf)]
-         (.seek raf offset)
-         (let [node-bytes (serialize-node node)
-               checksum (crc32 node-bytes)
-               length (alength node-bytes)]
-           ;; Write: length (4) + data (n) + checksum (4)
-           (.writeInt raf length)
-           (.write raf node-bytes)
-           (.writeInt raf (unchecked-int checksum))
-           offset)))
-
-     (defn- read-node [^RandomAccessFile raf offset node-cache]
-       "Read node from file with caching"
-       (if-let [cached (get @node-cache offset)]
-         cached
-         (do
-           (.seek raf offset)
-           (let [length (.readInt raf)
-                 node-bytes (byte-array length)]
-             (.read raf node-bytes)
-             (let [stored-checksum (unchecked-int (.readInt raf))
-                   computed-checksum (unchecked-int (crc32 node-bytes))]
-               (when (not= stored-checksum computed-checksum)
-                 (throw (ex-info "Checksum mismatch" {:offset offset
-                                                       :stored stored-checksum
-                                                       :computed computed-checksum})))
-               (let [node (deserialize-node node-bytes offset)]
-                 (swap! node-cache assoc offset node)
-                 node))))))
-
      ;; Forward declarations for mutual recursion
      (declare bt-insert-impl bt-bulk-insert-impl bt-delete-impl bt-range-impl bt-search-impl bt-seq-impl)
 
-     (defrecord DurableBTree [file-path raf root-offset node-cache]
+     (defrecord DurableBTree [storage    ;; IStorage implementation
+                              root-offset] ;; Current root address (not saved until explicit save)
        IBTree
        (bt-insert [this entry]
          ;; For now, delegate to helper function
@@ -184,7 +105,7 @@
        "Search for entry at position"
        (when-let [root-off (:root-offset btree)]
          (loop [node-offset root-off]
-           (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
+           (let [node (storage/restore (:storage btree) node-offset)]
              (case (:type node)
                :leaf
                (first (filter (fn [[p _]] (= p pos)) (:entries node)))
@@ -204,7 +125,7 @@
        (when-let [root-off (:root-offset btree)]
          (letfn [(node-range [node-offset]
                    (lazy-seq
-                    (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
+                    (let [node (storage/restore (:storage btree) node-offset)]
                       (case (:type node)
                         :leaf
                         ;; Filter leaf entries by range
@@ -235,7 +156,7 @@
        (when-let [root-off (:root-offset btree)]
          (letfn [(node-seq [node-offset]
                    (lazy-seq
-                    (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
+                    (let [node (storage/restore (:storage btree) node-offset)]
                       (case (:type node)
                         :leaf
                         (:entries node)
@@ -249,18 +170,17 @@
      (defn- bt-insert-impl [btree entry]
        "Insert entry using COW semantics"
        (let [[pos id] entry
-             raf (:raf btree)
-             cache (:node-cache btree)]
+             stor (:storage btree)]
          (if-not (:root-offset btree)
            ;; Empty tree - create first leaf
            (let [new-leaf (leaf-node [entry] nil)
-                 new-offset (write-node raf new-leaf)]
-             (write-header raf new-offset 1)
+                 new-offset (storage/store stor new-leaf)]
+             ;; Don't write header - that's done on explicit save
              (assoc btree :root-offset new-offset))
 
            ;; Insert into existing tree
            (letfn [(insert-into-node [node-offset path]
-                     (let [node (read-node raf node-offset cache)]
+                     (let [node (storage/restore stor node-offset)]
                        (case (:type node)
                          :leaf
                          ;; Insert into leaf
@@ -270,16 +190,16 @@
                            (if (<= (count new-entries) leaf-capacity)
                              ;; Fits in leaf, write new version
                              (let [new-leaf (leaf-node new-entries (:next-leaf node))
-                                   new-offset (write-node raf new-leaf)]
+                                   new-offset (storage/store stor new-leaf)]
                                {:offset new-offset :split nil})
                              ;; Split required
                              (let [mid (quot (count new-entries) 2)
                                    left-entries (subvec new-entries 0 mid)
                                    right-entries (subvec new-entries mid)
                                    right-leaf (leaf-node right-entries (:next-leaf node))
-                                   right-offset (write-node raf right-leaf)
+                                   right-offset (storage/store stor right-leaf)
                                    left-leaf (leaf-node left-entries right-offset)
-                                   left-offset (write-node raf left-leaf)
+                                   left-offset (storage/store stor left-leaf)
                                    split-key (first (first right-entries))]
                                {:offset left-offset
                                 :split {:key split-key :right-offset right-offset}})))
@@ -295,7 +215,7 @@
                              ;; No split, just update child pointer
                              (let [new-children (assoc children idx (:offset child-result))
                                    new-node (internal-node keys new-children)
-                                   new-offset (write-node raf new-node)]
+                                   new-offset (storage/store stor new-node)]
                                {:offset new-offset :split nil})
                              ;; Child split, insert new key
                              (let [split (:split child-result)
@@ -309,7 +229,7 @@
                                (if (<= (count new-children) btree-order)
                                  ;; Fits in node
                                  (let [new-node (internal-node new-keys new-children)
-                                       new-offset (write-node raf new-node)]
+                                       new-offset (storage/store stor new-node)]
                                    {:offset new-offset :split nil})
                                  ;; Split internal node
                                  (let [mid (quot (count new-children) 2)
@@ -319,9 +239,9 @@
                                        left-children (subvec new-children 0 mid)
                                        right-children (subvec new-children mid)
                                        right-node (internal-node right-keys right-children)
-                                       right-offset (write-node raf right-node)
+                                       right-offset (storage/store stor right-node)
                                        left-node (internal-node left-keys left-children)
-                                       left-offset (write-node raf left-node)]
+                                       left-offset (storage/store stor left-node)]
                                    {:offset left-offset
                                     :split {:key split-key :right-offset right-offset}}))))))))]
 
@@ -334,18 +254,17 @@
                  (let [split (:split result)
                        new-root (internal-node [(:key split)]
                                                [(:offset result) (:right-offset split)])
-                       new-root-offset (write-node raf new-root)]
+                       new-root-offset (storage/store stor new-root)]
                    ;; DON'T write header - return new btree with new root offset
                    (assoc btree :root-offset new-root-offset))))))))
 
      (defn- bt-delete-impl [btree entry]
        "Delete entry using COW semantics (simplified - no merging for now)"
        (let [[pos id] entry
-             raf (:raf btree)
-             cache (:node-cache btree)]
+             stor (:storage btree)]
          (when (:root-offset btree)
            (letfn [(delete-from-node [node-offset]
-                     (let [node (read-node raf node-offset cache)]
+                     (let [node (storage/restore stor node-offset)]
                        (case (:type node)
                          :leaf
                          (let [entries (:entries node)
@@ -355,11 +274,11 @@
                                                        entries))]
                            (if (seq new-entries)
                              (let [new-leaf (leaf-node new-entries (:next-leaf node))
-                                   new-offset (write-node raf new-leaf)]
+                                   new-offset (storage/store stor new-leaf)]
                                new-offset)
                              ;; Empty leaf - for now just write it (TODO: merge with sibling)
                              (let [new-leaf (leaf-node [] (:next-leaf node))
-                                   new-offset (write-node raf new-leaf)]
+                                   new-offset (storage/store stor new-leaf)]
                                new-offset)))
 
                          :internal
@@ -370,9 +289,9 @@
                                new-child-offset (delete-from-node (nth children idx))
                                new-children (assoc children idx new-child-offset)
                                new-node (internal-node keys new-children)]
-                           (write-node raf new-node)))))]
+                           (storage/store stor new-node)))))]
              (let [new-root-offset (delete-from-node (:root-offset btree))]
-               ;; DON'T write header - that breaks COW! Header only written on serialize/flush
+               ;; DON'T write header - that breaks COW! Header only written on explicit save
                (assoc btree :root-offset new-root-offset))))))
 
      (defn- bt-bulk-insert-impl [btree entries]
@@ -381,7 +300,7 @@
         Much faster than repeated single inserts for large batches."
        (if (empty? entries)
          btree
-         (let [raf (:raf btree)
+         (let [stor (:storage btree)
                sorted-entries (vec (sort entries))]
            (letfn [(build-leaf-level [entries]
                      "Build all leaf nodes from sorted entries"
@@ -393,7 +312,7 @@
                                next-entries (drop leaf-capacity remaining)
                                ;; For now, don't link next-leaf in bulk build
                                leaf (leaf-node chunk nil)
-                               offset (write-node raf leaf)]
+                               offset (storage/store stor leaf)]
                            (recur next-entries (conj leaves {:offset offset
                                                              :min-key (first (first chunk))
                                                              :max-key (first (last chunk))}))))))
@@ -412,7 +331,7 @@
                                  keys (vec (map :min-key (rest chunk)))
                                  child-offsets (vec (map :offset chunk))
                                  internal (internal-node keys child-offsets)
-                                 offset (write-node raf internal)]
+                                 offset (storage/store stor internal)]
                              (recur next-remaining
                                     (conj parents {:offset offset
                                                   :min-key (:min-key (first chunk))
@@ -428,38 +347,37 @@
                    (recur (build-internal-level level)))))))))
 
      (defn open-btree
-       "Open or create a durable B-tree file"
-       ([file-path]
-        (open-btree file-path false))
-       ([file-path create?]
-        (let [file (io/file file-path)
-              exists? (.exists file)
-              raf (RandomAccessFile. file "rw")]
-          (if (or create? (not exists?) (zero? (.length raf)))
-            ;; Create new file
-            (do
-              (write-header raf nil 0)
-              (->DurableBTree file-path raf nil (atom {})))
-            ;; Open existing file
-            (let [header (read-header raf)]
-              (->DurableBTree file-path raf (:root-offset header) (atom {})))))))
+       "Open or create a durable B-tree with the given storage implementation.
+
+       Parameters:
+       - storage: An implementation of IStorage protocol
+
+       Returns: DurableBTree instance using the provided storage"
+       [storage]
+       ;; Try to get root offset from storage if it supports it
+       (let [root-offset (try
+                          (let [get-root-fn (resolve 'nebsearch.disk-storage/get-root-offset)]
+                            (when get-root-fn
+                              (get-root-fn storage)))
+                          (catch Exception _ nil))]
+         (->DurableBTree storage root-offset)))
 
      (defn close-btree [btree]
-       "Close the B-tree file"
-       (when-let [raf (:raf btree)]
-         (.close ^RandomAccessFile raf)))
+       "Close the B-tree storage"
+       (when-let [storage (:storage btree)]
+         (when (satisfies? storage/IStorageClose storage)
+           (storage/close storage))))
 
      (defn- count-nodes [btree]
        "Count total number of nodes in the tree by traversal"
        (if-not (:root-offset btree)
          0
          (let [visited (atom #{})
-               raf (:raf btree)
-               cache (:node-cache btree)]
+               stor (:storage btree)]
            (letfn [(visit-node [offset]
                      (when-not (@visited offset)
                        (swap! visited conj offset)
-                       (let [node (read-node raf offset cache)]
+                       (let [node (storage/restore stor offset)]
                          (when (= (:type node) :internal)
                            (doseq [child (:children node)]
                              (visit-node child))))))]
@@ -471,21 +389,35 @@
        (if (instance? InMemoryBTree btree)
          {:type :in-memory
           :size (count (:data btree))}
-         {:type :durable
-          :root-offset (:root-offset btree)
-          :node-count (count-nodes btree)
-          :cache-size (count @(:node-cache btree))
-          :file-size (.length ^RandomAccessFile (:raf btree))}))
+         (merge
+          {:type :durable
+           :root-offset (:root-offset btree)
+           :node-count (count-nodes btree)}
+          (when (satisfies? storage/IStorageStats (:storage btree))
+            (storage/storage-stats (:storage btree))))))
 
+     (defn btree-save [btree]
+       "Explicitly save the B-tree state to storage.
+        This is the ONLY way to make changes durable.
+        All bt-insert, bt-delete operations are in-memory until this is called."
+       (when-let [stor (:storage btree)]
+         (when (satisfies? storage/IStorageSave stor)
+           ;; Update storage with current root offset if it supports it
+           (try
+             ;; Try to call set-root-offset! (disk storage specific)
+             (let [set-root-fn (resolve 'nebsearch.disk-storage/set-root-offset!)]
+               (when set-root-fn
+                 (set-root-fn stor (:root-offset btree))))
+             (catch Exception _))  ;; Ignore if not supported
+           ;; Explicitly save
+           (storage/save stor)))
+       btree)
+
+     ;; Deprecated alias for backward compatibility
      (defn btree-flush [btree]
-       "Ensure all data is written to disk"
-       (when-let [raf (:raf btree)]
-         ;; Write header with current root offset
-         (when-let [root-offset (:root-offset btree)]
-           (write-header raf root-offset (count-nodes btree)))
-         ;; Sync to disk
-         (.getChannel ^RandomAccessFile raf)
-         (.force (.getChannel ^RandomAccessFile raf) true)))))
+       "DEPRECATED: Use btree-save instead.
+        Explicitly save the B-tree state to storage."
+       (btree-save btree))))
 
 ;; ClojureScript stubs (not implemented yet)
 #?(:cljs
