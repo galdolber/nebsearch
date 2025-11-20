@@ -23,6 +23,15 @@
 (def ^:dynamic *cache-size* 1000)  ;; Max cache entries (LRU)
 (def ^:dynamic *auto-gc-threshold* 0.3)  ;; Auto-GC when >30% fragmented
 (def ^:dynamic *batch-threshold* 100)  ;; Use StringBuilder for batches >100
+(def ^:dynamic *bulk-insert-threshold* 50)  ;; Use bt-bulk-insert for >=50 docs, bt-insert for <50
+(def ^:dynamic *storage-cache-size* 256)  ;; Storage node cache size (small=128, medium=256, large=512)
+(def ^:dynamic *enable-metrics* false)  ;; Enable performance metrics tracking
+
+;; Preset cache configurations
+(def cache-presets
+  {:small  {:cache-size 500  :storage-cache-size 128  :bulk-threshold 25}
+   :medium {:cache-size 1000 :storage-cache-size 256  :bulk-threshold 50}
+   :large  {:cache-size 2000 :storage-cache-size 512  :bulk-threshold 100}})
 
 ;; Cross-platform timestamp function
 (defn- current-time-millis []
@@ -60,6 +69,40 @@
 (defn default-splitter [^String s]
   (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
 
+(defn apply-cache-preset
+  "Apply a cache preset configuration (:small, :medium, or :large).
+
+  Example:
+    (binding [*cache-size* (:cache-size (cache-presets :large))
+              *storage-cache-size* (:storage-cache-size (cache-presets :large))
+              *bulk-insert-threshold* (:bulk-threshold (cache-presets :large))]
+      ... your code ...)"
+  [preset]
+  (get cache-presets preset (:medium cache-presets)))
+
+(defn- create-metrics-atom []
+  "Create a metrics tracking atom"
+  (atom {:cache-hits 0
+         :cache-misses 0
+         :total-queries 0
+         :total-query-time-ms 0}))
+
+(defn get-metrics
+  "Get performance metrics from an index.
+  Returns nil if metrics are not enabled or not available."
+  [index]
+  (when-let [metrics (:metrics (meta index))]
+    @metrics))
+
+(defn reset-metrics!
+  "Reset performance metrics for an index."
+  [index]
+  (when-let [metrics (:metrics (meta index))]
+    (reset! metrics {:cache-hits 0
+                     :cache-misses 0
+                     :total-queries 0
+                     :total-query-time-ms 0})))
+
 (defn init
   "Initialize a new search index backed by in-memory storage (MemStorage).
 
@@ -88,7 +131,10 @@
            inverted (if (storage/precompute-inverted? storage)
                       (bt/open-btree storage)  ; Separate B-tree for pre-computed inverted
                       (atom {}))]              ; Lazy map for on-demand building
-       ^{:cache (atom {}) :storage storage :inverted inverted}
+       ^{:cache (atom {})
+         :storage storage
+         :inverted inverted
+         :metrics (when *enable-metrics* (create-metrics-atom))}
        {:data btree
         :index ""
         :ids {}
@@ -538,13 +584,23 @@
    {:pre [(map? flex)]}
    (if-not (and search-query data)
      #{}
-     (let [cache (:cache (meta flex))
+     (let [start-time (when *enable-metrics* (current-time-millis))
+           cache (:cache (meta flex))
+           metrics (:metrics (meta flex))
            words (default-splitter (default-encoder search-query))]
        (if (empty? words)
          #{}
          ;; Use LRU cache
          (if-let [cached (lru-cache-get cache words)]
-           (if limit (set (take limit cached)) cached)
+           (do
+             ;; Track cache hit
+             (when metrics
+               (swap! metrics (fn [m]
+                               (-> m
+                                   (update :cache-hits inc)
+                                   (update :total-queries inc)
+                                   (update :total-query-time-ms + (- (current-time-millis) start-time))))))
+             (if limit (set (take limit cached)) cached))
            (let [inverted (:inverted (meta flex))
                  ;; Try inverted index first
                  result (if inverted
@@ -581,6 +637,13 @@
                                   ;; No matches
                                   (recur ws (conj r #{}) min-pos max-pos)))
                               r))))]
+             ;; Track cache miss
+             (when metrics
+               (swap! metrics (fn [m]
+                               (-> m
+                                   (update :cache-misses inc)
+                                   (update :total-queries inc)
+                                   (update :total-query-time-ms + (- (current-time-millis) start-time))))))
              (lru-cache-put cache words result)
              (if limit (set (take limit result)) result))))))))
 
