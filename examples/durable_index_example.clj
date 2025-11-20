@@ -7,7 +7,7 @@
   (:require [nebsearch.core :as neb]
             [nebsearch.btree :as bt]))
 
-(comment
+(do #_comment
   ;;
   ;; BASIC USAGE - In-Memory vs Durable
   ;;

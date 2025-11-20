@@ -1,5 +1,5 @@
 (ns nebsearch.btree-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure.test :refer [deftest testing is]]
             [nebsearch.core :as neb]
             [nebsearch.btree :as bt]
             [clojure.java.io :as io]))
@@ -227,5 +227,3 @@
           (is (= (:fragmentation stats-mem) (:fragmentation stats-dur))))
         (finally
           (neb/close idx-dur))))))
-
-(run-tests)

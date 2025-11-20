@@ -17,6 +17,13 @@
   (into {} (for [i (range n)]
              [(str "doc" i) (str "content " i " some additional text")])))
 
+#_(let [n 1000
+      docs (generate-docs n)
+      queries (repeatedly 100 #(str "content " (rand-int n)))
+      idx (neb/search-add (neb/init {}) docs)]
+  (time (doseq [q queries]
+          (neb/search idx q))))
+
 (defn bench [label mode n operation]
   (print (format "%-45s" label))
   (flush)
@@ -162,4 +169,4 @@
 (println "\nBenchmark completed!")
 (println "═══════════════════════════════════════════════════════════════════════")
 
-(System/exit 0)
+;;(System/exit 0)
