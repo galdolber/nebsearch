@@ -370,7 +370,7 @@
               total-chars (count index)]
           (/ (double space-count) total-chars))))))
 
-(defn search-remove [{:keys [index data ids] :as flex} id-list]
+(defn search-remove [{:keys [index data ids pos-boundaries] :as flex} id-list]
   {:pre [(map? flex)
          (or (nil? id-list) (sequential? id-list))]}
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))
@@ -389,12 +389,12 @@
                                                 [k (assoc v :value (sets/difference (:value v) removed-ids))])
                                               old-cache)))
                 updated-ids (apply dissoc ids id-list)
-                pos-boundaries (build-pos-boundaries updated-ids index)
+                updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids id))) pos-boundaries)
                 result (-> (assoc flex
                                   :ids updated-ids
                                   :data data
                                   :index index  ;; Index unchanged (text in B-tree)
-                                  :pos-boundaries pos-boundaries)
+                                  :pos-boundaries updated-pos-boundaries)
                            (vary-meta assoc :cache new-cache))]
             ;; Auto-GC disabled for durable mode - could break COW file semantics
             result)))
@@ -416,24 +416,24 @@
                                                 [k (assoc v :value (sets/difference (:value v) removed-ids))])
                                               old-cache)))
                 updated-ids (apply dissoc ids id-list)
-                pos-boundaries (build-pos-boundaries updated-ids index)
+                updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids id))) pos-boundaries)
                 result (-> (assoc flex
                                   :ids updated-ids
                                   :data (persistent! data)
                                   :index index
-                                  :pos-boundaries pos-boundaries)
+                                  :pos-boundaries updated-pos-boundaries)
                            (vary-meta assoc :cache new-cache))]
             ;; Auto-GC if fragmentation exceeds threshold (in-memory mode only)
             (if (> (calculate-fragmentation result) *auto-gc-threshold*)
               (search-gc result)
               result)))))))
 
-(defn search-add [{:keys [ids] :as flex} pairs]
+(defn search-add [{:keys [ids pos-boundaries] :as flex} pairs]
   {:pre [(map? flex)
          (or (map? pairs) (sequential? pairs))]}
   (let [pairs (if (map? pairs) (seq pairs) pairs)
         updated-pairs (filter (comp ids first) pairs)
-        {:keys [ids ^String index data] :as flex}
+        {:keys [ids ^String index data pos-boundaries] :as flex}
         (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)
         durable? (durable-mode? flex)]
     ;; No need to reset cache - each version gets its own cache via vary-meta
@@ -443,7 +443,8 @@
              pos #?(:clj (.length index) :cljs (.-length index))
              data data
              r []
-             ids ids]
+             ids ids
+             new-boundaries []]
         (if w
           (let [^String w (default-encoder w)
                 len #?(:clj (.length w) :cljs (.-length w))
@@ -451,28 +452,31 @@
                 entry [pos id w]]
             (recur ws (+ pos len 1) (data-conj data entry true)
                    (conj r w)
-                   (assoc ids id pos)))
-          ;; Build index string and position boundaries for searching
+                   (assoc ids id pos)
+                   (conj new-boundaries [pos id len])))
+          ;; Build index string and concat new position boundaries (already sorted!)
           (let [new-index (str index (string/join join-char r) join-char)
-                pos-boundaries (build-pos-boundaries ids new-index)]
+                updated-pos-boundaries (into pos-boundaries new-boundaries)]
             (-> (assoc flex
                        :ids ids
                        :index new-index
                        :data data
-                       :pos-boundaries pos-boundaries)
+                       :pos-boundaries updated-pos-boundaries)
                 (vary-meta assoc :cache (atom {}))))))
       ;; In-memory mode - use transients for performance
       (loop [[[id w] & ws] pairs
              pos #?(:clj (.length index) :cljs (.-length index))
              data (transient data)
              r (transient [])
-             ids (transient ids)]
+             ids (transient ids)
+             new-boundaries []]
         (if w
           (let [^String w (default-encoder w)
                 len #?(:clj (.length w) :cljs (.-length w))
                 pair [pos id]]
             (recur ws (+ pos len 1) (conj! data pair) (conj! r w)
-                   (assoc! ids id (first pair))))
+                   (assoc! ids id (first pair))
+                   (conj new-boundaries [pos id len])))
           (let [words (persistent! r)
                 ;; Optimization: Use StringBuilder for large batches (JVM only)
                 new-index #?(:clj (if (>= (count words) *batch-threshold*)
@@ -484,13 +488,13 @@
                                     (str index (string/join join-char words) join-char))
                              :cljs (str index (string/join join-char words) join-char))
                 persistent-ids (persistent! ids)
-                pos-boundaries (build-pos-boundaries persistent-ids new-index)]
+                updated-pos-boundaries (into pos-boundaries new-boundaries)]
             ;; Create new version with its own cache to preserve COW semantics
             (-> (assoc flex
                        :ids persistent-ids
                        :index new-index
                        :data (persistent! data)
-                       :pos-boundaries pos-boundaries)
+                       :pos-boundaries updated-pos-boundaries)
                 (vary-meta assoc :cache (atom {})))))))))
 
 (defn rebuild-index [pairs]
