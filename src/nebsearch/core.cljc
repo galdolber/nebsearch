@@ -126,15 +126,18 @@
     ;; For B-tree, match rslice behavior:
     ;; - When end-entry is nil: return entries where X <= start-entry, largest first
     ;; - When end-entry is not nil: return entries where end-entry <= X <= start-entry, largest first
-    (let [all-entries (bt/bt-seq data)]
+    ;; NOTE: Entries can be [pos id] or [pos id text], so compare by position only
+    (let [all-entries (bt/bt-seq data)
+          start-pos (when start-entry (first start-entry))
+          end-pos (when end-entry (first end-entry))]
       (cond->> all-entries
-        ;; Filter by range
-        (and start-entry (not end-entry))
-        (filter #(<= (compare % start-entry) 0))
+        ;; Filter by range (compare positions only)
+        (and start-pos (not end-pos))
+        (filter #(<= (first %) start-pos))
 
-        (and start-entry end-entry)
-        (filter #(and (<= (compare % start-entry) 0)
-                      (>= (compare % end-entry) 0)))
+        (and start-pos end-pos)
+        (filter #(and (<= (first %) start-pos)
+                      (>= (first %) end-pos)))
 
         ;; Reverse to make it backwards
         true (reverse)))
@@ -300,12 +303,34 @@
 (declare search-gc)
 #?(:clj (declare open-index))
 
-(defn- calculate-fragmentation [{:keys [index ids]}]
-  (if (or (empty? index) (zero? (count ids)))
+(defn- calculate-fragmentation [{:keys [index ids data] :as flex}]
+  (if (zero? (count ids))
     0.0
-    (let [space-count (count (filter #(= % \space) index))
-          total-chars (count index)]
-      (/ (double space-count) total-chars))))
+    (if (durable-mode? flex)
+      ;; Durable mode: calculate from B-tree entries
+      ;; Fragmentation = (total_space - actual_text) / total_space
+      ;; This includes both delimiter overhead and gaps from removals
+      (let [entries (bt/bt-seq data)]
+        (if (empty? entries)
+          0.0
+          (let [;; Find the position where next entry would be added
+                ;; This is max(pos + len(text) + 1) across all entries
+                max-pos (reduce (fn [max-p [pos _ text]]
+                                 (max max-p (+ pos (count text) 1)))
+                               0 entries)
+                ;; Sum of actual text lengths (without delimiters or gaps)
+                text-length-only (reduce (fn [sum [_ _ text]]
+                                          (+ sum (count text)))
+                                        0 entries)]
+            (if (zero? max-pos)
+              0.0
+              (/ (double (- max-pos text-length-only)) max-pos)))))
+      ;; In-memory mode: count spaces in index string
+      (if (empty? index)
+        0.0
+        (let [space-count (count (filter #(= % \space) index))
+              total-chars (count index)]
+          (/ (double space-count) total-chars))))))
 
 (defn search-remove [{:keys [index data ids] :as flex} id-list]
   {:pre [(map? flex)
@@ -313,17 +338,11 @@
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))
         durable? (durable-mode? flex)]
     (if durable?
-      ;; Durable mode - use B-tree operations
+      ;; Durable mode - delete from B-tree (text is in B-tree)
       (loop [[[pos :as pair] & ps] existing
-             data data
-             index index]
+             data data]
         (if pair
-          (let [len (find-len index pos)]
-            (recur ps
-                   (data-disj data pair true)
-                   (str (subs index 0 pos)
-                        (apply str (repeat len " "))
-                        (subs index (+ pos len)))))
+          (recur ps (data-disj data pair true))
           ;; Create new version with updated cache
           (let [old-cache @(:cache (meta flex))
                 removed-ids (set id-list)
@@ -334,7 +353,7 @@
                 result (-> (assoc flex
                                   :ids (apply dissoc ids id-list)
                                   :data data
-                                  :index index)
+                                  :index index)  ;; Index unchanged (text in B-tree)
                            (vary-meta assoc :cache new-cache))]
             ;; Auto-GC disabled for durable mode - could break COW file semantics
             result)))
@@ -375,7 +394,7 @@
         durable? (durable-mode? flex)]
     ;; No need to reset cache - each version gets its own cache via vary-meta
     (if durable?
-      ;; Durable mode - no transients
+      ;; Durable mode - text stored in both index string (for search) and B-tree (for durability)
       (loop [[[id w] & ws] pairs
              pos #?(:clj (.length index) :cljs (.-length index))
              data data
@@ -384,19 +403,13 @@
         (if w
           (let [^String w (default-encoder w)
                 len #?(:clj (.length w) :cljs (.-length w))
-                pair [pos id]]
-            (recur ws (+ pos len 1) (data-conj data pair true) (conj r w)
-                   (assoc ids id (first pair))))
-          (let [words r
-                new-index #?(:clj (if (>= (count words) *batch-threshold*)
-                                    (let [sb (StringBuilder. index)]
-                                      (doseq [word words]
-                                        (.append sb word)
-                                        (.append sb join-char))
-                                      (.toString sb))
-                                    (str index (string/join join-char words) join-char))
-                             :cljs (str index (string/join join-char words) join-char))]
-            ;; Create new version with its own cache to preserve COW semantics
+                ;; Store [pos, id, text] in B-tree
+                entry [pos id w]]
+            (recur ws (+ pos len 1) (data-conj data entry true)
+                   (conj r w)
+                   (assoc ids id pos)))
+          ;; Build index string for searching
+          (let [new-index (str index (string/join join-char r) join-char)]
             (-> (assoc flex
                        :ids ids
                        :index new-index
@@ -464,26 +477,37 @@
          (if-let [cached (lru-cache-get cache words)]
            (if limit (set (take limit cached)) cached)
            (let [result
-                 (apply
-                  sets/intersection
-                  (loop [[w & ws] (reverse (sort-by count words))
-                         r []
-                         min-pos 0
-                         max-pos (count index)]
-                    (if w
-                      (let [positions (find-positions index min-pos max-pos w)
-                            pairs (filterv some? (mapv (fn [i] (first (data-rslice data [(inc i) nil] nil durable?)))
-                                                       positions))]
-                        (if (seq pairs)
-                          (let [new-min (long (apply min (map first pairs)))
-                                new-max (long (reduce (fn [mx [pos _]]
-                                                        (max mx (+ pos (find-len index pos))))
-                                                      0
-                                                      pairs))]
-                            (recur ws (conj r (set (map last pairs)))
-                                   new-min new-max))
-                          (recur ws (conj r #{}) min-pos max-pos)))
-                      r)))]
+                 ;; Both modes use index string for search
+                 (if true ;; Same logic for both modes
+                   (apply
+                    sets/intersection
+                    (loop [[w & ws] (reverse (sort-by count words))
+                           r []
+                           min-pos 0
+                           max-pos (count index)]
+                      (if w
+                        (let [positions (find-positions index min-pos max-pos w)
+                              ;; Find entries and verify position is within document range
+                              pairs (filterv some?
+                                            (mapv (fn [i]
+                                                    (when-let [entry (first (data-rslice data [(inc i) nil] nil durable?))]
+                                                      (let [pos (first entry)
+                                                            len (find-len index pos)]
+                                                        ;; Only return entry if position i is within [pos, pos+len)
+                                                        (when (and (>= i pos) (< i (+ pos len)))
+                                                          entry))))
+                                                  positions))]
+                          (if (seq pairs)
+                            (let [new-min (long (apply min (map first pairs)))
+                                  new-max (long (reduce (fn [mx [pos _]]
+                                                          (max mx (+ pos (find-len index pos))))
+                                                        0
+                                                        pairs))]
+                              ;; Extract document ID from second element (works for both [pos id] and [pos id text])
+                              (recur ws (conj r (set (map second pairs)))
+                                     new-min new-max))
+                            (recur ws (conj r #{}) min-pos max-pos)))
+                        r))))]
              (lru-cache-put cache words result)
              (if limit (set (take limit result)) result))))))))
 
@@ -496,13 +520,11 @@
       ;; For durable mode: extract pairs and rebuild using search-add
       #?(:clj
          (let [data-seq (bt/bt-seq data)
-               ;; Extract [id, text] pairs from current entries
-               ;; Only keep entries for documents still in ids map
-               pairs (keep (fn [[pos id]]
+               ;; Extract [id, text] pairs from B-tree entries
+               ;; Entries are now [pos id text], only keep docs still in ids map
+               pairs (keep (fn [[pos id text]]
                             (when (contains? ids id)
-                              (let [len (find-len index pos)
-                                    text (subs index pos (+ pos len))]
-                                [id text]))) data-seq)
+                              [id text])) data-seq)
                old-path (:index-path (meta flex))
                temp-path (str old-path ".gc-temp")
                old-meta (meta flex)]
@@ -545,9 +567,18 @@
     :btree-stats - B-tree statistics (durable mode only)"
   [flex]
   (let [durable? (durable-mode? flex)
+        ;; Calculate index-size differently for durable mode
+        index-size (if durable?
+                     ;; Durable: sum text lengths from B-tree entries
+                     (reduce (fn [sum [_ _ text]]
+                              (+ sum (count text) 1)) ;; +1 for delimiter
+                            0
+                            (bt/bt-seq (:data flex)))
+                     ;; In-memory: use index string length
+                     (count (:index flex)))
         base-stats {:mode (if durable? :durable :in-memory)
                     :document-count (count (:ids flex))
-                    :index-size (count (:index flex))
+                    :index-size index-size
                     :fragmentation (calculate-fragmentation flex)
                     :cache-size (count @(:cache (meta flex)))}]
     (if durable?

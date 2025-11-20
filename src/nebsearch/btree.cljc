@@ -340,7 +340,10 @@
                        (case (:type node)
                          :leaf
                          (let [entries (:entries node)
-                               new-entries (vec (remove #(= % entry) entries))]
+                               ;; Compare only [pos id], ignore text if present
+                               new-entries (vec (remove #(and (= (first %) pos)
+                                                              (= (second %) id))
+                                                       entries))]
                            (if (seq new-entries)
                              (let [new-leaf (leaf-node new-entries (:next-leaf node))
                                    new-offset (write-node raf new-leaf)]
