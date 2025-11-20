@@ -29,3 +29,6 @@ lib/
 .libs/
 persistent-sorted-set-src/
 *.jar
+
+# Benchmark output
+benchmark_results*.txt
