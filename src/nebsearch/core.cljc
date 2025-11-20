@@ -334,10 +334,8 @@
                                   :data data
                                   :index index)
                            (vary-meta assoc :cache (atom {})))]
-            ;; Auto-GC if fragmentation exceeds threshold
-            (if (> (calculate-fragmentation result) *auto-gc-threshold*)
-              (search-gc result)
-              result))))
+            ;; Auto-GC disabled - too risky with COW semantics
+            result)))
       ;; In-memory mode - use transients for performance
       (loop [[[pos :as pair] & ps] existing
              data (transient data)
@@ -354,10 +352,8 @@
                                   :data (persistent! data)
                                   :index index)
                            (vary-meta assoc :cache (atom {})))]
-            ;; Auto-GC if fragmentation exceeds threshold
-            (if (> (calculate-fragmentation result) *auto-gc-threshold*)
-              (search-gc result)
-              result)))))))
+            ;; Auto-GC disabled - too risky with COW semantics
+            result))))))
 
 (defn search-add [{:keys [ids] :as flex} pairs]
   {:pre [(map? flex)
@@ -481,16 +477,51 @@
              (lru-cache-put cache words result)
              (if limit (set (take limit result)) result))))))))
 
-(defn search-gc [{:keys [index data] :as flex}]
-  (let [durable? (durable-mode? flex)
-        data-seq (if durable? (bt/bt-seq data) (seq data))
-        pairs (mapv (fn [[pos id :as pair]]
-                      (let [len (find-len index (first pair))]
-                        [id (subs index pos (+ pos len))])) data-seq)
-        new-flex (if durable?
-                   (search-add (init {:durable? true :index-path (:index-path (meta flex))}) pairs)
-                   (search-add (init) pairs))]
-    (with-meta new-flex (meta flex))))
+(defn search-gc [{:keys [index data ids] :as flex}]
+  "Rebuild index to remove fragmentation. For in-memory mode only.
+   For durable mode with COW semantics, GC would break old version references,
+   so we just rebuild the index string and B-tree in place."
+  (let [durable? (durable-mode? flex)]
+    (if durable?
+      ;; For durable mode: extract pairs and rebuild using search-add
+      #?(:clj
+         (let [data-seq (bt/bt-seq data)
+               ;; Extract [id, text] pairs from current entries
+               ;; Only keep entries for documents still in ids map
+               pairs (keep (fn [[pos id]]
+                            (when (contains? ids id)
+                              (let [len (find-len index pos)
+                                    text (subs index pos (+ pos len))]
+                                [id text]))) data-seq)
+               old-path (:index-path (meta flex))
+               temp-path (str old-path ".gc-temp")
+               old-meta (meta flex)]
+           ;; Close old B-tree
+           (bt/close-btree data)
+           ;; Build new index in temp location
+           (let [rebuilt (search-add (init {:durable? true :index-path temp-path})
+                                     (into {} pairs))]
+             ;; Flush metadata to disk before closing
+             (serialize rebuilt)
+             ;; Close temp
+             (bt/close-btree (:data rebuilt))
+             ;; Delete old files and rename temp to original
+             (doseq [suffix ["" ".meta" ".versions"]]
+               (let [old-f (java.io.File. (str old-path suffix))
+                     temp-f (java.io.File. (str temp-path suffix))]
+                 (when (.exists old-f) (.delete old-f))
+                 (when (.exists temp-f) (.renameTo temp-f old-f))))
+             ;; Reopen at original path
+             (let [reopened (open-index {:index-path old-path})]
+               (with-meta reopened old-meta))))
+         :cljs flex)
+      ;; For in-memory mode: full rebuild
+      (let [data-seq (seq data)
+            pairs (mapv (fn [[pos id]]
+                         (let [len (find-len index pos)]
+                           [id (subs index pos (+ pos len))])) data-seq)
+            new-flex (search-add (init) pairs)]
+        (with-meta new-flex (meta flex))))))
 
 (defn index-stats
   "Get statistics about the search index.

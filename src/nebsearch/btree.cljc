@@ -416,6 +416,10 @@
      (defn btree-flush [btree]
        "Ensure all data is written to disk"
        (when-let [raf (:raf btree)]
+         ;; Write header with current root offset
+         (when-let [root-offset (:root-offset btree)]
+           (write-header raf root-offset (count-nodes btree)))
+         ;; Sync to disk
          (.getChannel ^RandomAccessFile raf)
          (.force (.getChannel ^RandomAccessFile raf) true)))))
 
