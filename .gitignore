@@ -32,3 +32,6 @@ persistent-sorted-set-src/
 
 # Benchmark output
 benchmark_results*.txt
+
+# Test output
+test_results*.txt
