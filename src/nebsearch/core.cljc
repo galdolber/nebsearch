@@ -123,24 +123,28 @@
 
    This matches pss/rslice exactly for compatibility."
   (if durable?
-    ;; For B-tree, match rslice behavior:
+    ;; For B-tree, use efficient range queries instead of full scan
     ;; - When end-entry is nil: return entries where X <= start-entry, largest first
     ;; - When end-entry is not nil: return entries where end-entry <= X <= start-entry, largest first
     ;; NOTE: Entries can be [pos id] or [pos id text], so compare by position only
-    (let [all-entries (bt/bt-seq data)
-          start-pos (when start-entry (first start-entry))
+    (let [start-pos (when start-entry (first start-entry))
           end-pos (when end-entry (first end-entry))]
-      (cond->> all-entries
-        ;; Filter by range (compare positions only)
+      (cond
+        ;; No range specified - return all entries reversed
+        (and (nil? start-pos) (nil? end-pos))
+        (reverse (bt/bt-range data nil nil))
+
+        ;; Only start specified: return entries where pos <= start-pos
         (and start-pos (not end-pos))
-        (filter #(<= (first %) start-pos))
+        (reverse (bt/bt-range data 0 start-pos))
 
+        ;; Both start and end: return entries where end-pos <= pos <= start-pos
         (and start-pos end-pos)
-        (filter #(and (<= (first %) start-pos)
-                      (>= (first %) end-pos)))
+        (reverse (bt/bt-range data end-pos start-pos))
 
-        ;; Reverse to make it backwards
-        true (reverse)))
+        ;; Only end specified (unusual): return entries where pos >= end-pos
+        :else
+        (reverse (bt/bt-range data end-pos nil))))
     (pss/rslice data start-entry end-entry)))
 
 (defn serialize [flex]

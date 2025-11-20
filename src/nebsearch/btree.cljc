@@ -191,34 +191,36 @@
                  (recur (nth children idx))))))))
 
      (defn- bt-range-impl [btree start end]
-       "Get all entries in range [start, end]"
+       "Get all entries in range [start, end].
+        Traverses tree structure (not next-leaf pointers) for COW correctness.
+        Optimizes by pruning subtrees outside the range."
        (when-let [root-off (:root-offset btree)]
-         ;; Find the first leaf containing start
-         (loop [node-offset root-off]
-           (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
-             (case (:type node)
-               :leaf
-               ;; Found a leaf, collect entries in range
-               (loop [current-leaf node
-                      result (transient [])]
-                 (let [entries (filter (fn [[pos _]]
-                                         (and (or (nil? start) (>= pos start))
-                                              (or (nil? end) (<= pos end))))
-                                       (:entries current-leaf))
-                       result' (reduce conj! result entries)]
-                   (if (and (:next-leaf current-leaf)
-                            (or (nil? end)
-                                (< (first (first (:entries current-leaf))) end)))
-                     (recur (read-node (:raf btree) (:next-leaf current-leaf) (:node-cache btree))
-                            result')
-                     (persistent! result'))))
+         (letfn [(node-range [node-offset]
+                   (lazy-seq
+                    (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
+                      (case (:type node)
+                        :leaf
+                        ;; Filter leaf entries by range
+                        (filter (fn [[pos _]]
+                                  (and (or (nil? start) (>= pos start))
+                                       (or (nil? end) (<= pos end))))
+                                (:entries node))
 
-               :internal
-               (let [keys (:keys node)
-                     children (:children node)
-                     idx (or (first (keep-indexed (fn [i k] (when (< (or start 0) k) i)) keys))
-                             (count keys))]
-                 (recur (nth children idx))))))))
+                        :internal
+                        ;; For internal nodes, only visit children that might contain entries in range
+                        (let [keys (:keys node)
+                              children (:children node)]
+                          ;; Determine which children to visit based on range
+                          (mapcat
+                           (fn [i]
+                             (let [child-min (if (zero? i) nil (nth keys (dec i)))
+                                   child-max (when (< i (count keys)) (nth keys i))]
+                               ;; Visit child if its range [child-min, child-max] overlaps [start, end]
+                               (when (and (or (nil? end) (nil? child-min) (< child-min end))
+                                         (or (nil? start) (nil? child-max) (> child-max start)))
+                                 (node-range (nth children i)))))
+                           (range (count children))))))))]
+           (vec (node-range root-off)))))
 
      (defn- bt-seq-impl [btree]
        "Return lazy seq of all entries by traversing tree structure (not next-leaf pointers).
