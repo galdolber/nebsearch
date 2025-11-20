@@ -2,9 +2,9 @@
   #?(:clj (:gen-class))
   (:require [clojure.string :as string]
             [clojure.set :as sets]
-            [me.tonsky.persistent-sorted-set :as pss]
             [nebsearch.btree :as bt]
-            [nebsearch.storage :as storage]))
+            [nebsearch.storage :as storage]
+            #?(:clj [nebsearch.memory-storage :as mem-storage])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -61,76 +61,66 @@
   (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
 
 (defn init
-  "Initialize a new in-memory search index.
+  "Initialize a new search index backed by in-memory storage (MemStorage).
 
-  For persistence, use store/restore API:
+  This creates a durable B-tree structure that provides:
+  - Better performance than old sorted-set implementation
+  - Time-travel and versioning via copy-on-write semantics
+  - Structural sharing for efficient updates
+  - Optional persistence via store/restore API
+
+  For disk persistence, use store/restore with DiskStorage:
     (def idx (init))
     (def idx2 (search-add idx [[\"doc1\" \"text\" \"Title\"]]))
-    (def storage (create-memory-storage))  ; or disk-storage
-    (def ref (store idx2 storage))
-    (def idx3 (restore storage ref))
+    (require '[nebsearch.disk-storage :as disk])
+    (def disk-storage (disk/open-disk-storage \"index.dat\" 128 true))
+    (def ref (store idx2 disk-storage))
+    (def idx3 (restore disk-storage ref))
 
   Examples:
-    (init) ; creates empty in-memory index"
+    (init) ; creates empty index with in-memory storage"
   []
-  ^{:cache (atom {})}
-  {:data (pss/sorted-set)
-   :index ""
-   :ids {}
-   :pos-boundaries []})
+  #?(:clj
+     (let [storage (mem-storage/create-memory-storage)
+           btree (bt/open-btree storage)]
+       ^{:cache (atom {}) :storage storage}
+       {:data btree
+        :index ""
+        :ids {}
+        :pos-boundaries []})
+     :cljs
+     (throw (ex-info "init not supported in ClojureScript" {}))))
 
-;; Helper functions for dual-mode operation
-(defn- durable-mode? [flex]
-  "Check if index is in durable mode (including lazy loaded indexes)"
-  (or (boolean (:durable? (meta flex)))
-      (boolean (:lazy? (meta flex)))
-      #?(:clj (instance? nebsearch.btree.DurableBTree (:data flex))
-         :cljs false)))
+;; All indexes are now durable B-tree based (no more dual-mode)
 
-(defn- data-conj [data entry durable?]
-  "Add entry to data structure (works with both sorted-set and btree)"
-  (if durable?
-    (bt/bt-insert data entry)
-    (conj data entry)))
-
-(defn- data-disj [data entry durable?]
-  "Remove entry from data structure (works with both sorted-set and btree)"
-  (if durable?
-    (bt/bt-delete data entry)
-    (disj data entry)))
-
-(defn- data-rslice [data start-entry end-entry durable?]
-  "Get range from data structure - returns BACKWARDS iterator like pss/rslice
+(defn- data-rslice [data start-entry end-entry]
+  "Get range from B-tree - returns BACKWARDS iterator
 
    rslice behavior:
    - (rslice data from to) returns backwards iterator where from <= X <= to
-   - (rslice data from nil) returns backwards iterator where X <= from
+   - (rslice data from nil) returns backwards iterator where X <= from"
+  ;; B-tree uses efficient range queries
+  ;; - When end-entry is nil: return entries where X <= start-entry, largest first
+  ;; - When end-entry is not nil: return entries where end-entry <= X <= start-entry, largest first
+  ;; NOTE: Entries can be [pos id] or [pos id text], so compare by position only
+  (let [start-pos (when start-entry (first start-entry))
+        end-pos (when end-entry (first end-entry))]
+    (cond
+      ;; No range specified - return all entries reversed
+      (and (nil? start-pos) (nil? end-pos))
+      (reverse (bt/bt-range data nil nil))
 
-   This matches pss/rslice exactly for compatibility."
-  (if durable?
-    ;; For B-tree, use efficient range queries instead of full scan
-    ;; - When end-entry is nil: return entries where X <= start-entry, largest first
-    ;; - When end-entry is not nil: return entries where end-entry <= X <= start-entry, largest first
-    ;; NOTE: Entries can be [pos id] or [pos id text], so compare by position only
-    (let [start-pos (when start-entry (first start-entry))
-          end-pos (when end-entry (first end-entry))]
-      (cond
-        ;; No range specified - return all entries reversed
-        (and (nil? start-pos) (nil? end-pos))
-        (reverse (bt/bt-range data nil nil))
+      ;; Only start specified: return entries where pos <= start-pos
+      (and start-pos (not end-pos))
+      (reverse (bt/bt-range data 0 start-pos))
 
-        ;; Only start specified: return entries where pos <= start-pos
-        (and start-pos (not end-pos))
-        (reverse (bt/bt-range data 0 start-pos))
+      ;; Both start and end: return entries where end-pos <= pos <= start-pos
+      (and start-pos end-pos)
+      (reverse (bt/bt-range data end-pos start-pos))
 
-        ;; Both start and end: return entries where end-pos <= pos <= start-pos
-        (and start-pos end-pos)
-        (reverse (bt/bt-range data end-pos start-pos))
-
-        ;; Only end specified (unusual): return entries where pos >= end-pos
-        :else
-        (reverse (bt/bt-range data end-pos nil))))
-    (pss/rslice data start-entry end-entry)))
+      ;; Only end specified (unusual): return entries where pos >= end-pos
+      :else
+      (reverse (bt/bt-range data end-pos nil)))))
 
 (defn close
   "Close a lazy index and release storage resources.
@@ -285,92 +275,54 @@
 ;; Forward declarations for mutual recursion
 (declare search-gc)
 
-(defn- calculate-fragmentation [{:keys [index ids data] :as flex}]
+(defn- calculate-fragmentation [{:keys [ids data] :as flex}]
   (if (zero? (count ids))
     0.0
-    (if (durable-mode? flex)
-      ;; Durable mode: calculate from B-tree entries
-      ;; Fragmentation = (total_space - actual_text) / total_space
-      ;; This includes both delimiter overhead and gaps from removals
-      (let [entries (bt/bt-seq data)]
-        (if (empty? entries)
-          0.0
-          (let [;; Find the position where next entry would be added
-                ;; This is max(pos + len(text) + 1) across all entries
-                max-pos (reduce (fn [max-p [pos _ text]]
-                                 (max max-p (+ pos (count text) 1)))
-                               0 entries)
-                ;; Sum of actual text lengths (without delimiters or gaps)
-                text-length-only (reduce (fn [sum [_ _ text]]
-                                          (+ sum (count text)))
-                                        0 entries)]
-            (if (zero? max-pos)
-              0.0
-              (/ (double (- max-pos text-length-only)) max-pos)))))
-      ;; In-memory mode: count spaces in index string
-      (if (empty? index)
+    ;; Calculate from B-tree entries
+    ;; Fragmentation = (total_space - actual_text) / total_space
+    ;; This includes both delimiter overhead and gaps from removals
+    (let [entries (bt/bt-seq data)]
+      (if (empty? entries)
         0.0
-        (let [space-count (count (filter #(= % \space) index))
-              total-chars (count index)]
-          (/ (double space-count) total-chars))))))
+        (let [;; Find the position where next entry would be added
+              ;; This is max(pos + len(text) + 1) across all entries
+              max-pos (reduce (fn [max-p [pos _ text]]
+                               (max max-p (+ pos (count text) 1)))
+                             0 entries)
+              ;; Sum of actual text lengths (without delimiters or gaps)
+              text-length-only (reduce (fn [sum [_ _ text]]
+                                        (+ sum (count text)))
+                                      0 entries)]
+          (if (zero? max-pos)
+            0.0
+            (/ (double (- max-pos text-length-only)) max-pos)))))))
 
 (defn search-remove [{:keys [index data ids pos-boundaries] :as flex} id-list]
   {:pre [(map? flex)
          (or (nil? id-list) (sequential? id-list))]}
-  (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))
-        durable? (durable-mode? flex)]
-    (if durable?
-      ;; Durable mode - delete from B-tree (text is in B-tree)
-      (loop [[[pos :as pair] & ps] existing
-             data data]
-        (if pair
-          (recur ps (data-disj data pair true))
-          ;; Create new version with updated cache
-          (let [old-cache @(:cache (meta flex))
-                removed-ids (set id-list)
-                ;; Filter cached results to remove deleted document IDs
-                new-cache (atom (into {} (map (fn [[k v]]
-                                                [k (assoc v :value (sets/difference (:value v) removed-ids))])
-                                              old-cache)))
-                updated-ids (apply dissoc ids id-list)
-                updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids id))) pos-boundaries)
-                result (-> (assoc flex
-                                  :ids updated-ids
-                                  :data data
-                                  :index index  ;; Index unchanged (text in B-tree)
-                                  :pos-boundaries updated-pos-boundaries)
-                           (vary-meta assoc :cache new-cache))]
-            ;; Auto-GC disabled for durable mode - could break COW file semantics
-            result)))
-      ;; In-memory mode - use transients for performance
-      (loop [[[pos :as pair] & ps] existing
-             data (transient data)
-             index index]
-        (if pair
-          (let [len (find-len index pos)]
-            (recur ps (disj! data pair)
-                   (str (subs index 0 pos)
-                        (apply str (repeat len " "))
-                        (subs index (+ pos len)))))
-          ;; Create new version with updated cache
-          (let [old-cache @(:cache (meta flex))
-                removed-ids (set id-list)
-                ;; Filter cached results to remove deleted document IDs
-                new-cache (atom (into {} (map (fn [[k v]]
-                                                [k (assoc v :value (sets/difference (:value v) removed-ids))])
-                                              old-cache)))
-                updated-ids (apply dissoc ids id-list)
-                updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids id))) pos-boundaries)
-                result (-> (assoc flex
-                                  :ids updated-ids
-                                  :data (persistent! data)
-                                  :index index
-                                  :pos-boundaries updated-pos-boundaries)
-                           (vary-meta assoc :cache new-cache))]
-            ;; Auto-GC if fragmentation exceeds threshold (in-memory mode only)
-            (if (> (calculate-fragmentation result) *auto-gc-threshold*)
-              (search-gc result)
-              result)))))))
+  (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))]
+    ;; Delete from B-tree (text is in B-tree)
+    (loop [[[pos :as pair] & ps] existing
+           data data]
+      (if pair
+        (recur ps (bt/bt-delete data pair))
+        ;; Create new version with updated cache
+        (let [old-cache @(:cache (meta flex))
+              removed-ids (set id-list)
+              ;; Filter cached results to remove deleted document IDs
+              new-cache (atom (into {} (map (fn [[k v]]
+                                              [k (assoc v :value (sets/difference (:value v) removed-ids))])
+                                            old-cache)))
+              updated-ids (apply dissoc ids id-list)
+              updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids id))) pos-boundaries)
+              result (-> (assoc flex
+                                :ids updated-ids
+                                :data data
+                                :index index  ;; Index unchanged (text in B-tree)
+                                :pos-boundaries updated-pos-boundaries)
+                         (vary-meta assoc :cache new-cache))]
+          ;; Auto-GC disabled for durable mode - could break COW file semantics
+          result))))))
 
 (defn search-add [{:keys [ids pos-boundaries] :as flex} pairs]
   {:pre [(map? flex)
@@ -378,71 +330,35 @@
   (let [pairs (if (map? pairs) (seq pairs) pairs)
         updated-pairs (filter (comp ids first) pairs)
         {:keys [ids ^String index data pos-boundaries] :as flex}
-        (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)
-        durable? (durable-mode? flex)]
-    ;; No need to reset cache - each version gets its own cache via vary-meta
-    (if durable?
-      ;; Durable mode - text stored in both index string (for search) and B-tree (for durability)
-      ;; Optimization: Collect all entries first, then bulk insert into B-tree
-      (loop [[[id w] & ws] pairs
-             pos #?(:clj (.length index) :cljs (.-length index))
-             btree-entries []
-             r []
-             ids ids
-             new-boundaries []]
-        (if w
-          (let [^String w (default-encoder w)
-                len #?(:clj (.length w) :cljs (.-length w))
-                ;; Collect entry for bulk insert
-                entry [pos id w]]
-            (recur ws (+ pos len 1)
-                   (conj btree-entries entry)
-                   (conj r w)
-                   (assoc ids id pos)
-                   (conj new-boundaries [pos id len])))
-          ;; Bulk insert all entries into B-tree at once
-          (let [new-index (str index (string/join join-char r) join-char)
-                updated-pos-boundaries (into pos-boundaries new-boundaries)
-                new-data (bt/bt-bulk-insert data btree-entries)]
-            (-> (assoc flex
-                       :ids ids
-                       :index new-index
-                       :data new-data
-                       :pos-boundaries updated-pos-boundaries)
-                (vary-meta assoc :cache (atom {}))))))
-      ;; In-memory mode - use transients for performance
-      (loop [[[id w] & ws] pairs
-             pos #?(:clj (.length index) :cljs (.-length index))
-             data (transient data)
-             r (transient [])
-             ids (transient ids)
-             new-boundaries []]
-        (if w
-          (let [^String w (default-encoder w)
-                len #?(:clj (.length w) :cljs (.-length w))
-                pair [pos id]]
-            (recur ws (+ pos len 1) (conj! data pair) (conj! r w)
-                   (assoc! ids id (first pair))
-                   (conj new-boundaries [pos id len])))
-          (let [words (persistent! r)
-                ;; Optimization: Use StringBuilder for large batches (JVM only)
-                new-index #?(:clj (if (>= (count words) *batch-threshold*)
-                                    (let [sb (StringBuilder. index)]
-                                      (doseq [word words]
-                                        (.append sb word)
-                                        (.append sb join-char))
-                                      (.toString sb))
-                                    (str index (string/join join-char words) join-char))
-                             :cljs (str index (string/join join-char words) join-char))
-                persistent-ids (persistent! ids)
-                updated-pos-boundaries (into pos-boundaries new-boundaries)]
-            ;; Create new version with its own cache to preserve COW semantics
-            (-> (assoc flex
-                       :ids persistent-ids
-                       :index new-index
-                       :data (persistent! data)
-                       :pos-boundaries updated-pos-boundaries)
-                (vary-meta assoc :cache (atom {})))))))))
+        (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)]
+    ;; Text stored in both index string (for search) and B-tree (for durability)
+    ;; Optimization: Collect all entries first, then bulk insert into B-tree
+    (loop [[[id w] & ws] pairs
+           pos #?(:clj (.length index) :cljs (.-length index))
+           btree-entries []
+           r []
+           ids ids
+           new-boundaries []]
+      (if w
+        (let [^String w (default-encoder w)
+              len #?(:clj (.length w) :cljs (.-length w))
+              ;; Collect entry for bulk insert
+              entry [pos id w]]
+          (recur ws (+ pos len 1)
+                 (conj btree-entries entry)
+                 (conj r w)
+                 (assoc ids id pos)
+                 (conj new-boundaries [pos id len])))
+        ;; Bulk insert all entries into B-tree at once
+        (let [new-index (str index (string/join join-char r) join-char)
+              updated-pos-boundaries (into pos-boundaries new-boundaries)
+              new-data (bt/bt-bulk-insert data btree-entries)]
+          (-> (assoc flex
+                     :ids ids
+                     :index new-index
+                     :data new-data
+                     :pos-boundaries updated-pos-boundaries)
+              (vary-meta assoc :cache (atom {}))))))))))
 
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
@@ -469,16 +385,13 @@
    (if-not (and search-query data)
      #{}
      (let [cache (:cache (meta flex))
-           words (default-splitter (default-encoder search-query))
-           durable? (durable-mode? flex)]
+           words (default-splitter (default-encoder search-query))]
        (if (empty? words)
          #{}
          ;; Use LRU cache
          (if-let [cached (lru-cache-get cache words)]
            (if limit (set (take limit cached)) cached)
            (let [result
-                 ;; Both modes use index string for search
-                 (if true ;; Same logic for both modes
                    (apply
                     sets/intersection
                     (loop [[w & ws] (reverse (sort-by count words))
@@ -507,50 +420,41 @@
              (lru-cache-put cache words result)
              (if limit (set (take limit result)) result))))))))
 
-(defn search-gc [{:keys [index data ids] :as flex}]
-  "Rebuild index to remove fragmentation. For in-memory indexes only.
-   For lazy indexes created via restore, just store and restore again to compact."
-  (let [durable? (durable-mode? flex)]
-    (if durable?
-      ;; For lazy indexes, user should use store/restore to compact
-      (throw (ex-info "GC not supported for lazy indexes. Use store/restore to compact."
-                      {:hint "Call (store index storage) to create a new compacted version"}))
-      ;; For in-memory mode: full rebuild
-      (let [data-seq (seq data)
-            pairs (mapv (fn [[pos id]]
-                         (let [len (find-len index pos)]
-                           [id (subs index pos (+ pos len))])) data-seq)
-            new-flex (search-add (init) pairs)]
-        (with-meta new-flex (meta flex))))))
+(defn search-gc [{:keys [data] :as flex}]
+  "Rebuild index to remove fragmentation.
+
+   Extracts all entries from the B-tree, creates a new index, and adds them back.
+   This compacts the data structure and removes any fragmentation.
+
+   For lazy indexes created via restore, use store/restore to compact:
+     (def ref2 (store lazy-index storage))  ;; Creates compacted version"
+  ;; Extract all entries from B-tree and rebuild
+  (let [entries (bt/bt-seq data)
+        pairs (mapv (fn [[_ id text]] [id text]) entries)
+        new-flex (search-add (init) pairs)]
+    (with-meta new-flex (meta flex))))
 
 (defn index-stats
   "Get statistics about the search index.
 
   Returns a map with:
-    :mode - :in-memory or :durable
+    :mode - always :durable (all indexes use B-tree now)
     :document-count - number of indexed documents
     :index-size - size of the index string in bytes
     :fragmentation - fragmentation ratio (0.0 to 1.0)
     :cache-size - number of cached search results
-    :btree-stats - B-tree statistics (durable mode only)"
+    :btree-stats - B-tree statistics"
   [flex]
-  (let [durable? (durable-mode? flex)
-        ;; Calculate index-size differently for durable mode
-        index-size (if durable?
-                     ;; Durable: sum text lengths from B-tree entries
-                     (reduce (fn [sum [_ _ text]]
-                              (+ sum (count text) 1)) ;; +1 for delimiter
-                            0
-                            (bt/bt-seq (:data flex)))
-                     ;; In-memory: use index string length
-                     (count (:index flex)))
-        base-stats {:mode (if durable? :durable :in-memory)
+  (let [;; Sum text lengths from B-tree entries
+        index-size (reduce (fn [sum [_ _ text]]
+                            (+ sum (count text) 1)) ;; +1 for delimiter
+                          0
+                          (bt/bt-seq (:data flex)))
+        base-stats {:mode :durable
                     :document-count (count (:ids flex))
                     :index-size index-size
                     :fragmentation (calculate-fragmentation flex)
                     :cache-size (count @(:cache (meta flex)))}]
-    (if durable?
-      (assoc base-stats :btree-stats #?(:clj (bt/btree-stats (:data flex))
-                                        :cljs nil))
-      base-stats)))
+    (assoc base-stats :btree-stats #?(:clj (bt/btree-stats (:data flex))
+                                      :cljs nil))))
 
