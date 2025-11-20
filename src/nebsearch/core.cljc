@@ -67,7 +67,7 @@
 
 
 (defn default-splitter [^String s]
-  (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
+  (set (remove string/blank? (string/split s #"[^a-zA-Z0-9]"))))
 
 (defn apply-cache-preset
   "Apply a cache preset configuration (:small, :medium, or :large).
@@ -545,6 +545,7 @@
 
 (defn- find-docs-with-word
   "Find all doc IDs containing the given word using inverted index.
+   Supports substring matching: 'tatto' matches 'tattoo'.
    For pre-computed (disk): Query B-tree directly
    For lazy (memory): Build on first access via B-tree iteration"
   [inverted word data]
@@ -553,10 +554,10 @@
     #?(:clj (instance? nebsearch.btree.DurableBTree inverted)
        :cljs false)
     #?(:clj
-       ;; Scan B-tree for all entries matching [word *]
-       ;; Entries are [word doc-id], filter for matching word
+       ;; Scan B-tree for all entries where word is substring of token
+       ;; Entries are [word doc-id], filter for substring match
        (set (keep (fn [[w doc-id]]
-                   (when (= w word) doc-id))
+                   (when (string/includes? w word) doc-id))
                  (bt/bt-seq inverted)))
        :cljs #{})
 
@@ -564,14 +565,18 @@
     #?(:clj (instance? clojure.lang.Atom inverted)
        :cljs false)
     #?(:clj
-       (or (get @inverted word)
-          ;; Not cached yet - build it by scanning B-tree
-          (let [doc-ids (set (keep (fn [[_ doc-id text]]
-                                    (when (some #{word} (default-splitter text))
+       ;; Check cache for exact match first
+       (if-let [cached (get @inverted word)]
+         cached
+         ;; Not cached yet - build it by scanning B-tree
+         (let [doc-ids (set (keep (fn [[_ doc-id text]]
+                                    ;; Check if any token in the text contains word as substring
+                                    (when (some #(string/includes? % word) (default-splitter text))
                                       doc-id))
                                   (bt/bt-seq data)))]
-            (swap! inverted assoc word doc-ids)
-            doc-ids))
+           ;; Cache the exact word for future lookups
+           (swap! inverted assoc word doc-ids)
+           doc-ids))
        :cljs #{})
 
     ;; No inverted index

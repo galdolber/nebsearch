@@ -243,10 +243,10 @@
 (deftest test-migration-memory-to-disk-with-cache
   (testing "Migrating memory→disk with populated lazy cache"
     (cleanup-disk-files)
-    (let [mem-idx (neb/search-add (neb/init) [["doc1" "cached word" "T1"]
-                                               ["doc2" "word uncached" "T2"]])
+    (let [mem-idx (neb/search-add (neb/init) [["doc1" "apple orange" "T1"]
+                                               ["doc2" "banana orange" "T2"]])
           ;; Search to populate cache
-          _ (neb/search mem-idx "cached")
+          _ (neb/search mem-idx "apple")
 
           storage (disk-storage/open-disk-storage "/tmp/test-inverted-migration.dat" 128 true)
           ref (neb/store mem-idx storage)]
@@ -256,9 +256,9 @@
 
       ;; Restore and verify all words work
       (let [disk-idx (neb/restore storage ref)]
-        (is (= #{"doc1"} (neb/search disk-idx "cached")))
-        (is (= #{"doc2"} (neb/search disk-idx "uncached")))
-        (is (= #{"doc1" "doc2"} (neb/search disk-idx "word"))))
+        (is (= #{"doc1"} (neb/search disk-idx "apple")))
+        (is (= #{"doc2"} (neb/search disk-idx "banana")))
+        (is (= #{"doc1" "doc2"} (neb/search disk-idx "orange"))))
 
       (storage/close storage))))
 
