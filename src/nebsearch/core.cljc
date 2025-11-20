@@ -88,14 +88,16 @@
               :version 0}
             {:data (bt/open-btree index-path true)
              :index ""
-             :ids {}})
+             :ids {}
+             :pos-boundaries []})
           :cljs
           (throw (ex-info "Durable mode not supported in ClojureScript" {})))
        ;; In-memory mode (default)
        ^{:cache (atom {})}
        {:data (pss/sorted-set)
         :index ""
-        :ids {}}))))
+        :ids {}
+        :pos-boundaries []}))))
 
 ;; Helper functions for dual-mode operation
 (defn- durable-mode? [flex]
@@ -303,6 +305,38 @@
     (throw (ex-info "Invalid index position: join-char not found"
                     {:pos pos :index-length (count index)}))))
 
+;; Magic Trick #1: Binary Search Position Index
+;; O(log n) lookups where n = number of documents (not positions!)
+(defn- build-pos-boundaries
+  "Build sorted vector of [position, doc-id, text-length] from :ids map.
+   Enables binary search to find which document contains a given position."
+  [ids index]
+  (vec (sort-by first
+                (map (fn [[id pos]]
+                       (let [len (find-len index pos)]
+                         [pos id len]))
+                     ids))))
+
+(defn- find-doc-at-pos
+  "Find document ID at given position using binary search.
+   Returns doc-id if position falls within a document, nil otherwise.
+   Complexity: O(log n) where n = number of documents."
+  [pos-boundaries pos]
+  (when (seq pos-boundaries)
+    (loop [lo 0
+           hi (dec (count pos-boundaries))]
+      (when (<= lo hi)
+        (let [mid (quot (+ lo hi) 2)
+              [start-pos doc-id text-len] (nth pos-boundaries mid)
+              end-pos (+ start-pos text-len)]
+          (cond
+            (and (>= pos start-pos) (< pos end-pos))
+            doc-id
+            (< pos start-pos)
+            (recur lo (dec mid))
+            :else
+            (recur (inc mid) hi)))))))
+
 ;; Forward declarations for mutual recursion
 (declare search-gc)
 #?(:clj (declare open-index))
@@ -354,10 +388,13 @@
                 new-cache (atom (into {} (map (fn [[k v]]
                                                 [k (assoc v :value (sets/difference (:value v) removed-ids))])
                                               old-cache)))
+                updated-ids (apply dissoc ids id-list)
+                pos-boundaries (build-pos-boundaries updated-ids index)
                 result (-> (assoc flex
-                                  :ids (apply dissoc ids id-list)
+                                  :ids updated-ids
                                   :data data
-                                  :index index)  ;; Index unchanged (text in B-tree)
+                                  :index index  ;; Index unchanged (text in B-tree)
+                                  :pos-boundaries pos-boundaries)
                            (vary-meta assoc :cache new-cache))]
             ;; Auto-GC disabled for durable mode - could break COW file semantics
             result)))
@@ -378,10 +415,13 @@
                 new-cache (atom (into {} (map (fn [[k v]]
                                                 [k (assoc v :value (sets/difference (:value v) removed-ids))])
                                               old-cache)))
+                updated-ids (apply dissoc ids id-list)
+                pos-boundaries (build-pos-boundaries updated-ids index)
                 result (-> (assoc flex
-                                  :ids (apply dissoc ids id-list)
+                                  :ids updated-ids
                                   :data (persistent! data)
-                                  :index index)
+                                  :index index
+                                  :pos-boundaries pos-boundaries)
                            (vary-meta assoc :cache new-cache))]
             ;; Auto-GC if fragmentation exceeds threshold (in-memory mode only)
             (if (> (calculate-fragmentation result) *auto-gc-threshold*)
@@ -412,12 +452,14 @@
             (recur ws (+ pos len 1) (data-conj data entry true)
                    (conj r w)
                    (assoc ids id pos)))
-          ;; Build index string for searching
-          (let [new-index (str index (string/join join-char r) join-char)]
+          ;; Build index string and position boundaries for searching
+          (let [new-index (str index (string/join join-char r) join-char)
+                pos-boundaries (build-pos-boundaries ids new-index)]
             (-> (assoc flex
                        :ids ids
                        :index new-index
-                       :data data)
+                       :data data
+                       :pos-boundaries pos-boundaries)
                 (vary-meta assoc :cache (atom {}))))))
       ;; In-memory mode - use transients for performance
       (loop [[[id w] & ws] pairs
@@ -440,12 +482,15 @@
                                         (.append sb join-char))
                                       (.toString sb))
                                     (str index (string/join join-char words) join-char))
-                             :cljs (str index (string/join join-char words) join-char))]
+                             :cljs (str index (string/join join-char words) join-char))
+                persistent-ids (persistent! ids)
+                pos-boundaries (build-pos-boundaries persistent-ids new-index)]
             ;; Create new version with its own cache to preserve COW semantics
             (-> (assoc flex
-                       :ids (persistent! ids)
+                       :ids persistent-ids
                        :index new-index
-                       :data (persistent! data))
+                       :data (persistent! data)
+                       :pos-boundaries pos-boundaries)
                 (vary-meta assoc :cache (atom {})))))))))
 
 (defn rebuild-index [pairs]
@@ -468,7 +513,7 @@
 (defn search
   ([flex search-query]
    (search flex search-query nil))
-  ([{:keys [index data] :as flex} search-query {:keys [limit] :or {limit nil}}]
+  ([{:keys [index data pos-boundaries] :as flex} search-query {:keys [limit] :or {limit nil}}]
    {:pre [(map? flex)]}
    (if-not (and search-query data)
      #{}
@@ -491,25 +536,21 @@
                            max-pos (count index)]
                       (if w
                         (let [positions (find-positions index min-pos max-pos w)
-                              ;; Find entries and verify position is within document range
-                              pairs (filterv some?
-                                            (mapv (fn [i]
-                                                    (when-let [entry (first (data-rslice data [(inc i) nil] nil durable?))]
-                                                      (let [pos (first entry)
-                                                            len (find-len index pos)]
-                                                        ;; Only return entry if position i is within [pos, pos+len)
-                                                        (when (and (>= i pos) (< i (+ pos len)))
-                                                          entry))))
-                                                  positions))]
-                          (if (seq pairs)
-                            (let [new-min (long (apply min (map first pairs)))
-                                  new-max (long (reduce (fn [mx [pos _]]
-                                                          (max mx (+ pos (find-len index pos))))
-                                                        0
-                                                        pairs))]
-                              ;; Extract document ID from second element (works for both [pos id] and [pos id text])
-                              (recur ws (conj r (set (map second pairs)))
+                              ;; ✨ MAGIC: Binary search instead of B-tree lookups! ✨
+                              doc-ids (keep #(find-doc-at-pos pos-boundaries %) positions)]
+                          (if (seq doc-ids)
+                            ;; Narrow search range based on matches
+                            (let [matching-bounds (filter (fn [[pos id _]]
+                                                           (some #(= id %) doc-ids))
+                                                         pos-boundaries)
+                                  new-min (long (apply min (map first matching-bounds)))
+                                  new-max (long (reduce (fn [mx [pos _ len]]
+                                                         (max mx (+ pos len)))
+                                                       0
+                                                       matching-bounds))]
+                              (recur ws (conj r (set doc-ids))
                                      new-min new-max))
+                            ;; No matches
                             (recur ws (conj r #{}) min-pos max-pos)))
                         r))))]
              (lru-cache-put cache words result)
@@ -635,13 +676,15 @@
                loaded-version (:version metadata)]
 
            ;; Open B-tree
-           (let [btree (bt/open-btree index-path false)]
+           (let [btree (bt/open-btree index-path false)
+                 pos-boundaries (build-pos-boundaries (:ids metadata) (:index metadata))]
              ^{:cache (atom {})
                :durable? true
                :index-path index-path
                :version loaded-version}
              {:data btree
               :index (:index metadata)
-              :ids (:ids metadata)}))))
+              :ids (:ids metadata)
+              :pos-boundaries pos-boundaries}))))
      :cljs
      (throw (ex-info "Durable mode not supported in ClojureScript" {}))))
