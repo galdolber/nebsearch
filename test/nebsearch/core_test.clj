@@ -7,8 +7,6 @@
 
 (deftest test-flex
   (let [flex (f/search-add (f/init) sample-data)
-        flex (f/deserialize (f/serialize flex))
-
         _ (is (= ["30 Nights of Paranormal Activity with the Devil Inside the Girl with the Dragon Tattoo"
                   "The Girl with the Dragon Tattoo"]
                  (mapv sample-data (f/search flex "girl tatto"))))
@@ -80,24 +78,6 @@
     (is (set? (f/search flex nil)))
     (is (set? (f/search flex "")))
     (is (set? (f/search flex "test")))))
-
-(deftest test-deserialize-metadata
-  "Bug #9: deserialize should preserve/restore cache metadata"
-  (let [flex (f/search-add (f/init) {1 "test" 2 "hello"})
-        serialized (f/serialize flex)
-        deserialized (f/deserialize serialized)]
-
-    ;; Metadata should exist
-    (is (some? (meta deserialized)))
-    (is (some? (:cache (meta deserialized))))
-    (is (instance? clojure.lang.Atom (:cache (meta deserialized))))
-
-    ;; Should be able to search after deserialize
-    (is (= #{1} (f/search deserialized "test")))
-
-    ;; Cache should work
-    (is (= #{1} (f/search deserialized "test")))
-    (is (= {#{"test"} #{1}} (into {} (map (fn [[k v]] [k (:value v)]) @(:cache (meta deserialized))))))))
 
 (deftest test-find-len-bounds-checking
   "Bug #2: find-len should throw meaningful error when join-char not found"
@@ -436,25 +416,6 @@
     ;; Three words
     (is (= #{1} (f/search flex "the quick fox")))
     (is (= #{} (f/search flex "the quick lazy"))))) ;; no match
-
-(deftest test-serialization-roundtrip
-  "Test serialization doesn't lose data"
-  (let [original (f/search-add (f/init)
-                               (into {} (map-indexed vector (range 100))))
-        serialized (f/serialize original)
-        deserialized (f/deserialize serialized)]
-
-    ;; Verify structure
-    (is (= (count (:ids original)) (count (:ids deserialized))))
-    (is (= (count (:data original)) (count (:data deserialized))))
-
-    ;; Verify searches work identically
-    (is (= (f/search original "50") (f/search deserialized "50")))
-    (is (= (f/search original "25") (f/search deserialized "25")))
-
-    ;; Verify can add after deserialize
-    (let [after-add (f/search-add deserialized {100 "new"})]
-      (is (= #{100} (f/search after-add "new"))))))
 
 (deftest test-id-types
   "Test various ID types"

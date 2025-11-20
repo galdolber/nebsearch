@@ -4,11 +4,7 @@
             [clojure.set :as sets]
             [me.tonsky.persistent-sorted-set :as pss]
             [nebsearch.btree :as bt]
-            [nebsearch.metadata :as meta]
-            [nebsearch.storage :as storage]
-            ;; disk-storage is only used for backward compatibility with init {:durable? true}
-            ;; For new code, use store/restore with any storage implementation
-            #?@(:clj [[nebsearch.disk-storage :as disk-storage]])))
+            [nebsearch.storage :as storage]))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -65,45 +61,23 @@
   (set (remove string/blank? (string/split s #"[^a-zA-Z0-9\.+]"))))
 
 (defn init
-  "Initialize a new search index.
+  "Initialize a new in-memory search index.
 
-  Options:
-    :durable? - Enable disk-backed persistence (default: false)
-    :index-path - Path to index file (required if :durable? is true)
+  For persistence, use store/restore API:
+    (def idx (init))
+    (def idx2 (search-add idx [[\"doc1\" \"text\" \"Title\"]]))
+    (def storage (create-memory-storage))  ; or disk-storage
+    (def ref (store idx2 storage))
+    (def idx3 (restore storage ref))
 
   Examples:
-    (init) ; in-memory index
-    (init {:durable? true :index-path \"index.dat\"}) ; disk-backed index"
-  ([]
-   (init {}))
-  ([opts]
-   (let [{:keys [durable? index-path]} opts]
-     (if durable?
-       #?(:clj
-          (do
-            (when-not index-path
-              (throw (ex-info "index-path required for durable mode" {})))
-            ;; Initialize metadata
-            (meta/initialize-metadata index-path)
-            ;; Create disk storage (backward compatibility - use store/restore API instead)
-            (let [storage (disk-storage/open-disk-storage index-path bt/btree-order true)]
-              ;; Create metadata with version tracking
-              ^{:cache (atom {})
-                :durable? true
-                :index-path index-path
-                :version 0}
-              {:data (bt/open-btree storage)
-               :index ""
-               :ids {}
-               :pos-boundaries []}))
-          :cljs
-          (throw (ex-info "Durable mode not supported in ClojureScript" {})))
-       ;; In-memory mode (default)
-       ^{:cache (atom {})}
-       {:data (pss/sorted-set)
-        :index ""
-        :ids {}
-        :pos-boundaries []}))))
+    (init) ; creates empty in-memory index"
+  []
+  ^{:cache (atom {})}
+  {:data (pss/sorted-set)
+   :index ""
+   :ids {}
+   :pos-boundaries []})
 
 ;; Helper functions for dual-mode operation
 (defn- durable-mode? [flex]
@@ -158,46 +132,14 @@
         (reverse (bt/bt-range data end-pos nil))))
     (pss/rslice data start-entry end-entry)))
 
-(defn serialize [flex]
-  (if (durable-mode? flex)
-    ;; For durable mode, persist everything to disk
-    (do
-      #?(:clj
-         (let [index-path (:index-path (clojure.core/meta flex))
-               current-version (or (:version (clojure.core/meta flex)) 0)
-               new-version (inc current-version)
-               root-offset (get-in (bt/btree-stats (:data flex)) [:root-offset])]
-           ;; Explicitly save B-tree to disk
-           (bt/btree-save (:data flex))
-           ;; Write metadata (index string and ids map)
-           (meta/write-metadata index-path
-                                {:index (:index flex)
-                                 :ids (:ids flex)
-                                 :version new-version
-                                 :timestamp (System/currentTimeMillis)})
-           ;; Append to version log
-           (meta/append-version index-path
-                                {:version new-version
-                                 :timestamp (System/currentTimeMillis)
-                                 :root-offset root-offset
-                                 :parent-version current-version})
-           ;; Return flex with updated version in metadata
-           (vary-meta flex assoc :version new-version)))
-      flex)
-    ;; For in-memory mode, convert sorted-set to regular set
-    (update flex :data #(into #{} %))))
-
-(defn deserialize [flex]
-  (-> flex
-      (update :data #(apply pss/sorted-set %))
-      (vary-meta #(or % {:cache (atom {})}))))
-
 (defn close
-  "Close a durable index and release resources.
+  "Close a lazy index and release storage resources.
    No-op for in-memory indexes."
-  [flex]
-  (when (durable-mode? flex)
-    #?(:clj (bt/close-btree (:data flex))))
+  [index]
+  (when-let [data (:data index)]
+    (when #?(:clj (instance? nebsearch.btree.DurableBTree data)
+             :cljs false)
+      (bt/close-btree data)))
   nil)
 
 (defn store
@@ -302,114 +244,6 @@
      :cljs
      (throw (ex-info "restore not supported in ClojureScript" {}))))
 
-(defn snapshot
-  "Create a named snapshot of the current index state.
-
-  Options:
-    :name - Name for this snapshot (required)
-
-  Returns the index unchanged, but records this version as a named snapshot.
-
-  Example:
-    (snapshot idx {:name \"checkpoint-1\"})"
-  [flex {:keys [name]}]
-  (if (durable-mode? flex)
-    #?(:clj
-       (do
-         (when-not name
-           (throw (ex-info "Snapshot name required" {})))
-         ;; First flush to ensure we have latest version saved
-         (let [flushed (flush flex)
-               index-path (:index-path (clojure.core/meta flushed))
-               current-version (:version (clojure.core/meta flushed))
-               versions (meta/read-version-log index-path)]
-           ;; Update the current version entry with snapshot name
-           (when-let [version-entry (first (filter #(= (:version %) current-version) versions))]
-             (let [updated-entry (assoc version-entry :snapshot-name name)
-                   other-versions (remove #(= (:version %) current-version) versions)
-                   all-versions (sort-by :version (conj other-versions updated-entry))
-                   log-path (meta/version-log-path index-path)]
-               ;; Rewrite version log
-               (spit log-path
-                     (clojure.string/join "\n" (map pr-str all-versions)))))
-           flushed))
-       :cljs
-       (throw (ex-info "Snapshots not supported in ClojureScript" {})))
-    ;; In-memory mode - just return the index
-    flex))
-
-(defn list-snapshots
-  "List all named snapshots for a durable index.
-
-  Returns a vector of maps with :version, :snapshot-name, and :timestamp."
-  [flex]
-  (if (durable-mode? flex)
-    #?(:clj
-       (let [index-path (:index-path (clojure.core/meta flex))]
-         (meta/list-snapshots index-path))
-       :cljs [])
-    []))
-
-(defn restore-snapshot
-  "Restore a durable index to a named snapshot.
-
-  Options:
-    :name - Snapshot name to restore (required)
-
-  Returns a new index with data from the snapshot.
-
-  Example:
-    (restore-snapshot idx {:name \"checkpoint-1\"})"
-  [flex {:keys [name]}]
-  (if (durable-mode? flex)
-    #?(:clj
-       (do
-         (when-not name
-           (throw (ex-info "Snapshot name required" {})))
-         ;; Close current index and reopen at snapshot
-         ;; Note: open-index is defined later, so we call it via var
-         (let [index-path (:index-path (clojure.core/meta flex))
-               open-index-fn (resolve 'nebsearch.core/open-index)]
-           (close flex)
-           (open-index-fn {:index-path index-path
-                           :snapshot-name name})))
-       :cljs
-       (throw (ex-info "Snapshots not supported in ClojureScript" {})))
-    flex))
-
-(defn gc-versions
-  "Garbage collect old versions, keeping only specified snapshots.
-
-  Options:
-    :keep-snapshots - Vector of snapshot names to keep (default: all named snapshots)
-    :keep-latest - Number of latest versions to keep (default: 1)
-
-  This will rewrite the version log to only include kept versions.
-  Note: The B-tree file will still contain old nodes until file-level GC is implemented.
-
-  Example:
-    (gc-versions idx {:keep-snapshots [\"checkpoint-1\" \"checkpoint-2\"]
-                      :keep-latest 5})"
-  [flex {:keys [keep-snapshots keep-latest] :or {keep-latest 1}}]
-  (if (durable-mode? flex)
-    #?(:clj
-       (let [index-path (:index-path (clojure.core/meta flex))
-             all-versions (meta/read-version-log index-path)
-             ;; Determine which versions to keep
-             snapshot-versions (if keep-snapshots
-                                 (set (map :version
-                                           (filter #(some #{(:snapshot-name %)} keep-snapshots)
-                                                   all-versions)))
-                                 (set (map :version (filter :snapshot-name all-versions))))
-             latest-versions (set (map :version (take-last keep-latest all-versions)))
-             keep-versions (clojure.set/union snapshot-versions latest-versions)]
-         ;; GC the versions
-         (meta/gc-old-versions index-path keep-versions)
-         flex)
-       :cljs
-       (throw (ex-info "Version GC not supported in ClojureScript" {})))
-    flex))
-
 (defn find-len [index pos]
   (if-let [end (string/index-of index join-char pos)]
     (- end pos)
@@ -450,7 +284,6 @@
 
 ;; Forward declarations for mutual recursion
 (declare search-gc)
-#?(:clj (declare open-index))
 
 (defn- calculate-fragmentation [{:keys [index ids data] :as flex}]
   (if (zero? (count ids))
@@ -675,41 +508,13 @@
              (if limit (set (take limit result)) result))))))))
 
 (defn search-gc [{:keys [index data ids] :as flex}]
-  "Rebuild index to remove fragmentation. For in-memory mode only.
-   For durable mode with COW semantics, GC would break old version references,
-   so we just rebuild the index string and B-tree in place."
+  "Rebuild index to remove fragmentation. For in-memory indexes only.
+   For lazy indexes created via restore, just store and restore again to compact."
   (let [durable? (durable-mode? flex)]
     (if durable?
-      ;; For durable mode: extract pairs and rebuild using search-add
-      #?(:clj
-         (let [data-seq (bt/bt-seq data)
-               ;; Extract [id, text] pairs from B-tree entries
-               ;; Entries are now [pos id text], only keep docs still in ids map
-               pairs (keep (fn [[pos id text]]
-                            (when (contains? ids id)
-                              [id text])) data-seq)
-               old-path (:index-path (meta flex))
-               temp-path (str old-path ".gc-temp")
-               old-meta (meta flex)]
-           ;; Close old B-tree
-           (bt/close-btree data)
-           ;; Build new index in temp location
-           (let [rebuilt (search-add (init {:durable? true :index-path temp-path})
-                                     (into {} pairs))]
-             ;; Flush metadata to disk before closing
-             (serialize rebuilt)
-             ;; Close temp
-             (bt/close-btree (:data rebuilt))
-             ;; Delete old files and rename temp to original
-             (doseq [suffix ["" ".meta" ".versions"]]
-               (let [old-f (java.io.File. (str old-path suffix))
-                     temp-f (java.io.File. (str temp-path suffix))]
-                 (when (.exists old-f) (.delete old-f))
-                 (when (.exists temp-f) (.renameTo temp-f old-f))))
-             ;; Reopen at original path
-             (let [reopened (open-index {:index-path old-path})]
-               (with-meta reopened old-meta))))
-         :cljs flex)
+      ;; For lazy indexes, user should use store/restore to compact
+      (throw (ex-info "GC not supported for lazy indexes. Use store/restore to compact."
+                      {:hint "Call (store index storage) to create a new compacted version"}))
       ;; For in-memory mode: full rebuild
       (let [data-seq (seq data)
             pairs (mapv (fn [[pos id]]
@@ -749,61 +554,3 @@
                                         :cljs nil))
       base-stats)))
 
-(defn flush
-  "Flush a durable index to disk.
-   No-op for in-memory indexes.
-
-   This ensures all data is written to disk and fsync'd.
-   Same as serialize, but used for explicit flush operations."
-  [flex]
-  (if (durable-mode? flex)
-    (serialize flex)
-    flex))
-
-(defn open-index
-  "Open an existing durable index from disk.
-
-  Options:
-    :index-path - Path to the index file (required)
-    :version - Optional version number to open (default: latest)
-    :snapshot-name - Optional snapshot name to open
-
-  Returns a search index that can be used with search, search-add, etc.
-
-  Note: The index is opened in read-write mode. To create a new index,
-  use (init {:durable? true :index-path \"...\"})"
-  [{:keys [index-path version snapshot-name]}]
-  #?(:clj
-     (do
-       (when-not index-path
-         (throw (ex-info "index-path required" {})))
-
-       ;; Load metadata
-       (let [metadata (meta/read-metadata index-path)]
-         (when-not metadata
-           (throw (ex-info "No metadata found - index may not exist or is corrupted"
-                           {:index-path index-path})))
-
-         ;; Get version info
-         (let [version-info (if (or version snapshot-name)
-                              (meta/get-version index-path
-                                                (cond
-                                                  version {:version version}
-                                                  snapshot-name {:snapshot-name snapshot-name}))
-                              (last (meta/read-version-log index-path)))
-               loaded-version (:version metadata)]
-
-           ;; Open B-tree with disk storage (backward compatibility)
-           (let [storage (disk-storage/open-disk-storage index-path bt/btree-order false)
-                 btree (bt/open-btree storage)
-                 pos-boundaries (build-pos-boundaries (:ids metadata) (:index metadata))]
-             ^{:cache (atom {})
-               :durable? true
-               :index-path index-path
-               :version loaded-version}
-             {:data btree
-              :index (:index metadata)
-              :ids (:ids metadata)
-              :pos-boundaries pos-boundaries}))))
-     :cljs
-     (throw (ex-info "Durable mode not supported in ClojureScript" {}))))
