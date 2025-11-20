@@ -312,10 +312,6 @@
          (or (nil? id-list) (sequential? id-list))]}
   (let [existing (filter identity (mapv (fn [id] [(get ids id) id]) id-list))
         durable? (durable-mode? flex)]
-    ;; Update cache entries to remove deleted IDs
-    (swap! (:cache (meta flex)) update-vals
-           (fn [entry]
-             (update entry :value #(apply disj % id-list))))
     (if durable?
       ;; Durable mode - use B-tree operations
       (loop [[[pos :as pair] & ps] existing
@@ -328,13 +324,19 @@
                    (str (subs index 0 pos)
                         (apply str (repeat len " "))
                         (subs index (+ pos len)))))
-          ;; Create new version with its own cache to preserve COW semantics
-          (let [result (-> (assoc flex
+          ;; Create new version with updated cache
+          (let [old-cache @(:cache (meta flex))
+                removed-ids (set id-list)
+                ;; Filter cached results to remove deleted document IDs
+                new-cache (atom (into {} (map (fn [[k v]]
+                                                [k (assoc v :value (sets/difference (:value v) removed-ids))])
+                                              old-cache)))
+                result (-> (assoc flex
                                   :ids (apply dissoc ids id-list)
                                   :data data
                                   :index index)
-                           (vary-meta assoc :cache (atom {})))]
-            ;; Auto-GC disabled - too risky with COW semantics
+                           (vary-meta assoc :cache new-cache))]
+            ;; Auto-GC disabled for durable mode - could break COW file semantics
             result)))
       ;; In-memory mode - use transients for performance
       (loop [[[pos :as pair] & ps] existing
@@ -346,14 +348,22 @@
                    (str (subs index 0 pos)
                         (apply str (repeat len " "))
                         (subs index (+ pos len)))))
-          ;; Create new version with its own cache to preserve COW semantics
-          (let [result (-> (assoc flex
+          ;; Create new version with updated cache
+          (let [old-cache @(:cache (meta flex))
+                removed-ids (set id-list)
+                ;; Filter cached results to remove deleted document IDs
+                new-cache (atom (into {} (map (fn [[k v]]
+                                                [k (assoc v :value (sets/difference (:value v) removed-ids))])
+                                              old-cache)))
+                result (-> (assoc flex
                                   :ids (apply dissoc ids id-list)
                                   :data (persistent! data)
                                   :index index)
-                           (vary-meta assoc :cache (atom {})))]
-            ;; Auto-GC disabled - too risky with COW semantics
-            result))))))
+                           (vary-meta assoc :cache new-cache))]
+            ;; Auto-GC if fragmentation exceeds threshold (in-memory mode only)
+            (if (> (calculate-fragmentation result) *auto-gc-threshold*)
+              (search-gc result)
+              result)))))))
 
 (defn search-add [{:keys [ids] :as flex} pairs]
   {:pre [(map? flex)
