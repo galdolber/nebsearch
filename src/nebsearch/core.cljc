@@ -209,18 +209,13 @@
                                       (vec (bt/bt-seq inverted))
 
                                       ;; Source is atom/map (memory -> disk migration)
-                                      ;; If atom is empty/sparse, build from main B-tree entries
+                                      ;; Always build from scratch to ensure completeness
                                       #?(:clj (instance? clojure.lang.Atom inverted)
                                          :cljs false)
-                                      (let [cached-entries (vec (for [[word doc-ids] @inverted
-                                                                     doc-id doc-ids]
-                                                                 [word doc-id]))]
-                                        (if (empty? cached-entries)
-                                          ;; Build from scratch by scanning main data B-tree
-                                          (vec (for [[_ doc-id text] entries
-                                                     word (default-splitter text)]
-                                                 [word doc-id]))
-                                          cached-entries))
+                                      ;; Build from scratch by scanning main data B-tree
+                                      (vec (for [[_ doc-id text] entries
+                                                 word (default-splitter text)]
+                                             [word doc-id]))
 
                                       :else [])
                     inverted-with-data (if (seq inverted-entries)
@@ -387,14 +382,12 @@
                                             (bt/bt-seq inverted))
                                      inverted)
                                :cljs inverted)
-                            ;; For lazy map: remove doc IDs from sets
+                            ;; For lazy map: remove doc IDs from sets (create new atom for COW)
                             #?(:clj (if (instance? clojure.lang.Atom inverted)
-                                     (do
-                                       (swap! inverted (fn [inv-map]
-                                                        (into {} (map (fn [[word doc-ids]]
-                                                                       [word (sets/difference doc-ids removed-ids-set)])
-                                                                     inv-map))))
-                                       inverted)
+                                     ;; Create NEW atom for COW semantics (don't mutate shared atom!)
+                                     (atom (into {} (map (fn [[word doc-ids]]
+                                                          [word (sets/difference doc-ids removed-ids-set)])
+                                                        @inverted)))
                                      inverted)
                                :cljs inverted))
               result (-> (assoc flex
@@ -441,14 +434,26 @@
         ;; Bulk insert all entries into B-tree at once
         (let [new-index (str index (string/join join-char r) join-char)
               updated-pos-boundaries (into pos-boundaries new-boundaries)
-              new-data (bt/bt-bulk-insert data btree-entries)
+              ;; IMPORTANT: bt-bulk-insert builds NEW tree from scratch!
+              ;; Must merge existing + new entries
+              existing-entries (bt/bt-seq data)
+              all-data-entries (into existing-entries btree-entries)
+              new-data (if (seq all-data-entries)
+                        (bt/bt-bulk-insert (bt/open-btree storage) all-data-entries)
+                        data)
               ;; Update inverted index
               inverted (:inverted (meta flex))
               new-inverted (cond
                             ;; Pre-computed B-tree (disk storage) - bulk insert all entries
                             (and precompute? (seq inverted-entries))
                             #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     (bt/bt-bulk-insert inverted inverted-entries)
+                                     ;; IMPORTANT: bt-bulk-insert builds NEW tree from scratch!
+                                     ;; Must merge existing + new inverted entries
+                                     (let [existing-inv-entries (bt/bt-seq inverted)
+                                           all-inv-entries (into existing-inv-entries inverted-entries)]
+                                       (if (seq all-inv-entries)
+                                         (bt/bt-bulk-insert (bt/open-btree storage) all-inv-entries)
+                                         inverted))
                                      inverted)
                                :cljs inverted)
 
@@ -456,18 +461,14 @@
                             #?(:clj (instance? clojure.lang.Atom inverted)
                                :cljs false)
                             #?(:clj
-                               (do
-                                 ;; Only update words that are already in the cache
-                                 (when (seq inverted-entries)
-                                   (swap! inverted (fn [inv-map]
-                                                    (reduce (fn [m [word doc-id]]
-                                                             ;; Only update if word is already cached
-                                                             (if (contains? m word)
-                                                               (update m word conj doc-id)
-                                                               m))
-                                                           inv-map
-                                                           inverted-entries))))
-                                 inverted)
+                               ;; Create NEW atom for COW semantics (don't mutate shared atom!)
+                               (atom (reduce (fn [m [word doc-id]]
+                                              ;; Only update if word is already cached
+                                              (if (contains? m word)
+                                                (update m word conj doc-id)
+                                                m))
+                                            @inverted
+                                            inverted-entries))
                                :cljs inverted)
 
                             ;; No inverted index
