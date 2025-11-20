@@ -5,7 +5,8 @@
             [me.tonsky.persistent-sorted-set :as pss]
             [nebsearch.btree :as bt]
             [nebsearch.metadata :as meta]
-            #?(:clj [nebsearch.disk-storage :as disk-storage])))
+            #?(:clj [nebsearch.disk-storage :as disk-storage])
+            #?(:clj [nebsearch.memory-storage :as memory-storage])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -104,8 +105,11 @@
 
 ;; Helper functions for dual-mode operation
 (defn- durable-mode? [flex]
-  "Check if index is in durable mode"
-  (boolean (:durable? (meta flex))))
+  "Check if index is in durable mode (including lazy loaded indexes)"
+  (or (boolean (:durable? (meta flex)))
+      (boolean (:lazy? (meta flex)))
+      #?(:clj (instance? nebsearch.btree.DurableBTree (:data flex))
+         :cljs false)))
 
 (defn- data-conj [data entry durable?]
   "Add entry to data structure (works with both sorted-set and btree)"
@@ -193,6 +197,117 @@
   (when (durable-mode? flex)
     #?(:clj (bt/close-btree (:data flex))))
   nil)
+
+(defn store
+  "Store the index to storage and return a reference.
+
+  This allows dynamic persistence - you can create a normal in-memory index
+  and decide to persist it at any point. The reference can be used with restore
+  to get a lazy version of the index. Multiple calls to store with incremental
+  changes will use structural sharing (COW semantics).
+
+  Example:
+    (def idx (init))
+    (def idx2 (search-add idx \"doc1\" \"hello world\"))
+    (def ref (store idx2 storage))
+    ;; ref is a map with :root-offset, :index, :ids
+
+  Parameters:
+  - index: The search index to store (can be in-memory or already lazy)
+  - storage: An IStorage implementation (e.g., DiskStorage or MemoryStorage)
+
+  Returns:
+  - A reference map {:root-offset, :index, :ids, :pos-boundaries} that can be used with restore"
+  [index storage]
+  #?(:clj
+     (let [data (:data index)]
+       (cond
+         ;; Already a durable B-tree - just need to save it
+         (instance? nebsearch.btree.DurableBTree data)
+         (let [root-offset (:root-offset data)]
+           ;; Update root offset in storage using type-specific method
+           (cond
+             (instance? nebsearch.disk_storage.DiskStorage storage)
+             (disk-storage/set-root-offset! storage root-offset)
+
+             (instance? nebsearch.memory_storage.MemoryStorage storage)
+             (memory-storage/set-root-offset! storage root-offset))
+
+           ;; Save storage
+           (when (satisfies? nebsearch.storage/IStorageSave storage)
+             (nebsearch.storage/save storage))
+
+           {:root-offset root-offset
+            :index (:index index)
+            :ids (:ids index)
+            :pos-boundaries (:pos-boundaries index)})
+
+         ;; In-memory sorted set - need to convert to B-tree and store
+         :else
+         (let [;; Create a B-tree with the storage
+               btree (bt/open-btree storage)
+               ;; Convert sorted-set entries to B-tree
+               entries (vec data)
+               btree-with-data (if (seq entries)
+                                 (bt/bt-bulk-insert btree entries)
+                                 btree)
+               root-offset (:root-offset btree-with-data)]
+           ;; Update root offset in storage
+           (cond
+             (instance? nebsearch.disk_storage.DiskStorage storage)
+             (disk-storage/set-root-offset! storage root-offset)
+
+             (instance? nebsearch.memory_storage.MemoryStorage storage)
+             (memory-storage/set-root-offset! storage root-offset))
+
+           ;; Save to storage
+           (when (satisfies? nebsearch.storage/IStorageSave storage)
+             (nebsearch.storage/save storage))
+
+           {:root-offset root-offset
+            :index (:index index)
+            :ids (:ids index)
+            :pos-boundaries (:pos-boundaries index)})))
+     :cljs
+     (throw (ex-info "store not supported in ClojureScript" {}))))
+
+(defn restore
+  "Restore an index from storage using a reference.
+
+  The returned index is lazy - it will load B-tree nodes from storage on-demand.
+  All operations (search, search-add, search-remove) work transparently on lazy
+  indexes. You can make changes to a lazy index and store it again to get a new
+  reference with structural sharing.
+
+  Example:
+    (def storage (disk-storage/open-disk-storage \"index.dat\" 128 false))
+    (def idx-lazy (restore storage ref))
+    ;; Works transparently
+    (search idx-lazy \"hello\")
+    ;; Make changes
+    (def idx2 (search-add idx-lazy \"doc2\" \"more text\"))
+    ;; Store again - structural sharing with previous version
+    (def ref2 (store idx2 storage))
+
+  Parameters:
+  - storage: An IStorage implementation (must be the same storage used for store)
+  - reference: A reference map returned from store {:root-offset, :index, :ids, :pos-boundaries}
+
+  Returns:
+  - A lazy search index that loads nodes on-demand"
+  [storage reference]
+  #?(:clj
+     (let [{:keys [root-offset index ids pos-boundaries]} reference
+           ;; Create a B-tree that will lazily load from storage
+           btree (bt/->DurableBTree storage root-offset)]
+       ^{:cache (atom {})
+         :lazy? true}
+       {:data btree
+        :index index
+        :ids ids
+        :pos-boundaries pos-boundaries})
+     :cljs
+     (throw (ex-info "restore not supported in ClojureScript" {}))))
 
 (defn snapshot
   "Create a named snapshot of the current index state.
