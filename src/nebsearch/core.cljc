@@ -445,18 +445,11 @@
           ;; Auto-GC disabled for durable mode - could break COW file semantics
           result)))))
 
-(defn search-add [{:keys [ids pos-boundaries] :as flex} pairs]
-  {:pre [(map? flex)
-         (or (map? pairs) (sequential? pairs))]}
-  (let [pairs (if (map? pairs) (seq pairs) pairs)
-        updated-pairs (filter (comp ids first) pairs)
-        {:keys [ids ^String index data pos-boundaries] :as flex}
-        (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)
-        storage (:storage (meta flex))
-        precompute? (and storage (storage/precompute-inverted? storage))]
-    ;; Text stored in both index string (for search) and B-tree (for durability)
-    ;; Optimization: Collect all entries first, then bulk insert into B-tree
-    (loop [[[id w] & ws] pairs
+(defn- search-add-bulk
+  "Bulk insert approach: rebuilds entire B-tree from scratch.
+   Optimal for large batches (>= threshold)"
+  [{:keys [ids ^String index data pos-boundaries] :as flex} pairs storage precompute?]
+  (loop [[[id w] & ws] pairs
            pos #?(:clj (.length index) :cljs (.-length index))
            btree-entries []
            inverted-entries []  ;; Collect [word doc-id] for inverted B-tree
@@ -525,7 +518,85 @@
                      :data new-data
                      :pos-boundaries updated-pos-boundaries)
               ;; Reset LRU cache to force fresh searches, but keep inverted as-is
-              (vary-meta merge {:cache (atom {}) :inverted new-inverted})))))))
+              (vary-meta merge {:cache (atom {}) :inverted new-inverted}))))))
+
+(defn- search-add-incremental
+  "Incremental insert approach: uses bt-insert for each entry.
+   Optimal for small batches (< threshold). O(k log n) complexity."
+  [{:keys [ids ^String index data pos-boundaries] :as flex} pairs storage precompute?]
+  (reduce
+   (fn [current-flex [id w]]
+     ;; Skip nil or empty values
+     (if-not w
+       current-flex
+       (let [^String encoded-w (default-encoder w)
+           len #?(:clj (.length encoded-w) :cljs (.-length encoded-w))
+           pos #?(:clj (.length (:index current-flex)) :cljs (.-length (:index current-flex)))
+           entry [pos id encoded-w]
+
+           ;; Incremental B-tree insert
+           new-data (bt/bt-insert (:data current-flex) entry)
+
+           ;; Update inverted index incrementally
+           words (default-splitter encoded-w)
+           inverted (:inverted (meta current-flex))
+           new-inverted (cond
+                          ;; Pre-computed B-tree (disk storage) - insert each [word doc-id]
+                          (and precompute? (seq words))
+                          #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
+                                   (reduce (fn [inv-tree word]
+                                            (bt/bt-insert inv-tree [word id]))
+                                          inverted
+                                          words)
+                                   inverted)
+                             :cljs inverted)
+
+                          ;; Lazy atom/map (memory storage) - update cached words
+                          #?(:clj (instance? clojure.lang.Atom inverted)
+                             :cljs false)
+                          #?(:clj
+                             ;; Create NEW atom for COW semantics
+                             (atom (reduce (fn [m word]
+                                            ;; Only update if word is already cached
+                                            (if (contains? m word)
+                                              (update m word conj id)
+                                              m))
+                                          @inverted
+                                          words))
+                             :cljs inverted)
+
+                          ;; No inverted index
+                          :else inverted)]
+
+       ;; Return updated flex
+       (-> current-flex
+           (assoc :data new-data
+                  :index (str (:index current-flex) encoded-w join-char)
+                  :ids (assoc (:ids current-flex) id pos)
+                  :pos-boundaries (conj (:pos-boundaries current-flex) [pos id len]))
+           (vary-meta merge {:cache (atom {}) :inverted new-inverted})))))
+   flex
+   pairs))
+
+(defn search-add [{:keys [ids pos-boundaries] :as flex} pairs]
+  {:pre [(map? flex)
+         (or (map? pairs) (sequential? pairs))]}
+  (let [pairs (if (map? pairs) (seq pairs) pairs)
+        updated-pairs (filter (comp ids first) pairs)
+        {:keys [ids ^String index data pos-boundaries] :as flex}
+        (if (seq updated-pairs) (search-remove flex (mapv first updated-pairs)) flex)
+        storage (:storage (meta flex))
+        precompute? (and storage (storage/precompute-inverted? storage))
+        num-new-docs (count pairs)
+        use-bulk? (>= num-new-docs *bulk-insert-threshold*)]
+
+    ;; Choose strategy based on batch size
+    (if use-bulk?
+      ;; Large batch: Use bulk rebuild (O(n + k))
+      (search-add-bulk flex pairs storage precompute?)
+      ;; Small batch: Use incremental inserts (O(k log n))
+      (search-add-incremental flex pairs storage precompute?))))
+
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
          r (transient [])]
