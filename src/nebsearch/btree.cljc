@@ -37,6 +37,7 @@
 (defprotocol IBTree
   "Protocol for B-tree operations"
   (bt-insert [this entry] "Insert [pos id] entry, returns new tree")
+  (bt-bulk-insert [this entries] "Bulk insert multiple entries efficiently, returns new tree")
   (bt-delete [this entry] "Delete [pos id] entry, returns new tree")
   (bt-range [this start end] "Get all entries in range [start end]")
   (bt-search [this pos] "Find entry at position")
@@ -47,6 +48,9 @@
   IBTree
   (bt-insert [this entry]
     (->InMemoryBTree (conj data entry)))
+
+  (bt-bulk-insert [this entries]
+    (->InMemoryBTree (into data entries)))
 
   (bt-delete [this entry]
     (->InMemoryBTree (disj data entry)))
@@ -152,13 +156,16 @@
                  node))))))
 
      ;; Forward declarations for mutual recursion
-     (declare bt-insert-impl bt-delete-impl bt-range-impl bt-search-impl bt-seq-impl)
+     (declare bt-insert-impl bt-bulk-insert-impl bt-delete-impl bt-range-impl bt-search-impl bt-seq-impl)
 
      (defrecord DurableBTree [file-path raf root-offset node-cache]
        IBTree
        (bt-insert [this entry]
          ;; For now, delegate to helper function
          (bt-insert-impl this entry))
+
+       (bt-bulk-insert [this entries]
+         (bt-bulk-insert-impl this entries))
 
        (bt-delete [this entry]
          (bt-delete-impl this entry))
@@ -367,6 +374,58 @@
              (let [new-root-offset (delete-from-node (:root-offset btree))]
                ;; DON'T write header - that breaks COW! Header only written on serialize/flush
                (assoc btree :root-offset new-root-offset))))))
+
+     (defn- bt-bulk-insert-impl [btree entries]
+       "Bulk insert entries efficiently by building tree bottom-up.
+        entries should be pre-sorted by [pos id].
+        Much faster than repeated single inserts for large batches."
+       (if (empty? entries)
+         btree
+         (let [raf (:raf btree)
+               sorted-entries (vec (sort entries))]
+           (letfn [(build-leaf-level [entries]
+                     "Build all leaf nodes from sorted entries"
+                     (loop [remaining entries
+                            leaves []]
+                       (if (empty? remaining)
+                         leaves
+                         (let [chunk (vec (take leaf-capacity remaining))
+                               next-entries (drop leaf-capacity remaining)
+                               ;; For now, don't link next-leaf in bulk build
+                               leaf (leaf-node chunk nil)
+                               offset (write-node raf leaf)]
+                           (recur next-entries (conj leaves {:offset offset
+                                                             :min-key (first (first chunk))
+                                                             :max-key (first (last chunk))}))))))
+
+                   (build-internal-level [children]
+                     "Build one level of internal nodes from child nodes"
+                     (if (<= (count children) 1)
+                       (first children) ;; Return root
+                       (loop [remaining children
+                              parents []]
+                         (if (empty? remaining)
+                           parents
+                           (let [chunk (vec (take btree-order remaining))
+                                 next-remaining (drop btree-order remaining)
+                                 ;; Extract keys - each key is the min of the corresponding child
+                                 keys (vec (map :min-key (rest chunk)))
+                                 child-offsets (vec (map :offset chunk))
+                                 internal (internal-node keys child-offsets)
+                                 offset (write-node raf internal)]
+                             (recur next-remaining
+                                    (conj parents {:offset offset
+                                                  :min-key (:min-key (first chunk))
+                                                  :max-key (:max-key (last chunk))})))))))]
+
+             ;; Build tree bottom-up
+             (let [leaves (build-leaf-level sorted-entries)]
+               (loop [level leaves]
+                 (if (<= (count level) 1)
+                   ;; Done! We have the root
+                   (assoc btree :root-offset (:offset (first level)))
+                   ;; Build next level
+                   (recur (build-internal-level level)))))))))
 
      (defn open-btree
        "Open or create a durable B-tree file"

@@ -439,28 +439,31 @@
     ;; No need to reset cache - each version gets its own cache via vary-meta
     (if durable?
       ;; Durable mode - text stored in both index string (for search) and B-tree (for durability)
+      ;; Optimization: Collect all entries first, then bulk insert into B-tree
       (loop [[[id w] & ws] pairs
              pos #?(:clj (.length index) :cljs (.-length index))
-             data data
+             btree-entries []
              r []
              ids ids
              new-boundaries []]
         (if w
           (let [^String w (default-encoder w)
                 len #?(:clj (.length w) :cljs (.-length w))
-                ;; Store [pos, id, text] in B-tree
+                ;; Collect entry for bulk insert
                 entry [pos id w]]
-            (recur ws (+ pos len 1) (data-conj data entry true)
+            (recur ws (+ pos len 1)
+                   (conj btree-entries entry)
                    (conj r w)
                    (assoc ids id pos)
                    (conj new-boundaries [pos id len])))
-          ;; Build index string and concat new position boundaries (already sorted!)
+          ;; Bulk insert all entries into B-tree at once
           (let [new-index (str index (string/join join-char r) join-char)
-                updated-pos-boundaries (into pos-boundaries new-boundaries)]
+                updated-pos-boundaries (into pos-boundaries new-boundaries)
+                new-data (bt/bt-bulk-insert data btree-entries)]
             (-> (assoc flex
                        :ids ids
                        :index new-index
-                       :data data
+                       :data new-data
                        :pos-boundaries updated-pos-boundaries)
                 (vary-meta assoc :cache (atom {}))))))
       ;; In-memory mode - use transients for performance
