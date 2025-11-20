@@ -53,7 +53,7 @@
           idx (neb/init)
           ref (neb/store idx storage)]
       (is (some? ref))
-      (is (nil? (:root-offset ref))) ;; No root for empty index
+      (is (some? (:root-offset ref))) ;; Empty B-tree still has root node
 
       (let [idx2 (neb/restore storage ref)]
         (is (= #{} (neb/search idx2 "anything")))

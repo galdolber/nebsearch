@@ -153,10 +153,12 @@
   Returns:
   - A reference map {:root-offset, :index, :ids, :pos-boundaries} that can be used with restore"
   [index storage]
-  (let [data (:data index)]
+  (let [data (:data index)
+        current-storage (:storage (meta index))]
     (cond
-      ;; Already a durable B-tree - just need to save it
-      #?(:clj (instance? nebsearch.btree.DurableBTree data)
+      ;; Already a durable B-tree using the SAME storage - just need to save it
+      #?(:clj (and (instance? nebsearch.btree.DurableBTree data)
+                   (identical? current-storage storage))
          :cljs false)
       (let [root-offset (:root-offset data)]
         ;; Update root offset in storage using generic protocol
@@ -172,11 +174,11 @@
          :ids (:ids index)
          :pos-boundaries (:pos-boundaries index)})
 
-      ;; In-memory sorted set - need to convert to B-tree and store
+      ;; B-tree with different storage or converting - extract entries and create new B-tree
       :else
-      (let [;; Create a B-tree with the storage
+      (let [;; Create a B-tree with the target storage
             btree (bt/open-btree storage)
-            ;; Convert sorted-set entries to B-tree
+            ;; Extract all entries from current B-tree (or other data structure)
             entries (vec data)
             btree-with-data (if (seq entries)
                               (bt/bt-bulk-insert btree entries)
@@ -320,7 +322,7 @@
                                 :data data
                                 :index index  ;; Index unchanged (text in B-tree)
                                 :pos-boundaries updated-pos-boundaries)
-                         (vary-meta assoc :cache new-cache))]
+                         (vary-meta merge {:cache new-cache}))]
           ;; Auto-GC disabled for durable mode - could break COW file semantics
           result)))))
 
@@ -358,8 +360,7 @@
                      :index new-index
                      :data new-data
                      :pos-boundaries updated-pos-boundaries)
-              (vary-meta assoc :cache (atom {}))))))))
-
+              (vary-meta merge {:cache (atom {})})))))))
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
          r (transient [])]
