@@ -5,8 +5,10 @@
             [me.tonsky.persistent-sorted-set :as pss]
             [nebsearch.btree :as bt]
             [nebsearch.metadata :as meta]
-            #?(:clj [nebsearch.disk-storage :as disk-storage])
-            #?(:clj [nebsearch.memory-storage :as memory-storage])))
+            [nebsearch.storage :as storage]
+            ;; disk-storage is only used for backward compatibility with init {:durable? true}
+            ;; For new code, use store/restore with any storage implementation
+            #?@(:clj [[nebsearch.disk-storage :as disk-storage]])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -83,7 +85,7 @@
               (throw (ex-info "index-path required for durable mode" {})))
             ;; Initialize metadata
             (meta/initialize-metadata index-path)
-            ;; Create disk storage
+            ;; Create disk storage (backward compatibility - use store/restore API instead)
             (let [storage (disk-storage/open-disk-storage index-path bt/btree-order true)]
               ;; Create metadata with version tracking
               ^{:cache (atom {})
@@ -219,57 +221,47 @@
   Returns:
   - A reference map {:root-offset, :index, :ids, :pos-boundaries} that can be used with restore"
   [index storage]
-  #?(:clj
-     (let [data (:data index)]
-       (cond
-         ;; Already a durable B-tree - just need to save it
-         (instance? nebsearch.btree.DurableBTree data)
-         (let [root-offset (:root-offset data)]
-           ;; Update root offset in storage using type-specific method
-           (cond
-             (instance? nebsearch.disk_storage.DiskStorage storage)
-             (disk-storage/set-root-offset! storage root-offset)
+  (let [data (:data index)]
+    (cond
+      ;; Already a durable B-tree - just need to save it
+      #?(:clj (instance? nebsearch.btree.DurableBTree data)
+         :cljs false)
+      (let [root-offset (:root-offset data)]
+        ;; Update root offset in storage using generic protocol
+        (when (satisfies? storage/IStorageRoot storage)
+          (storage/set-root-offset storage root-offset))
 
-             (instance? nebsearch.memory_storage.MemoryStorage storage)
-             (memory-storage/set-root-offset! storage root-offset))
+        ;; Save storage
+        (when (satisfies? storage/IStorageSave storage)
+          (storage/save storage))
 
-           ;; Save storage
-           (when (satisfies? nebsearch.storage/IStorageSave storage)
-             (nebsearch.storage/save storage))
+        {:root-offset root-offset
+         :index (:index index)
+         :ids (:ids index)
+         :pos-boundaries (:pos-boundaries index)})
 
-           {:root-offset root-offset
-            :index (:index index)
-            :ids (:ids index)
-            :pos-boundaries (:pos-boundaries index)})
+      ;; In-memory sorted set - need to convert to B-tree and store
+      :else
+      (let [;; Create a B-tree with the storage
+            btree (bt/open-btree storage)
+            ;; Convert sorted-set entries to B-tree
+            entries (vec data)
+            btree-with-data (if (seq entries)
+                              (bt/bt-bulk-insert btree entries)
+                              btree)
+            root-offset (:root-offset btree-with-data)]
+        ;; Update root offset in storage using generic protocol
+        (when (satisfies? storage/IStorageRoot storage)
+          (storage/set-root-offset storage root-offset))
 
-         ;; In-memory sorted set - need to convert to B-tree and store
-         :else
-         (let [;; Create a B-tree with the storage
-               btree (bt/open-btree storage)
-               ;; Convert sorted-set entries to B-tree
-               entries (vec data)
-               btree-with-data (if (seq entries)
-                                 (bt/bt-bulk-insert btree entries)
-                                 btree)
-               root-offset (:root-offset btree-with-data)]
-           ;; Update root offset in storage
-           (cond
-             (instance? nebsearch.disk_storage.DiskStorage storage)
-             (disk-storage/set-root-offset! storage root-offset)
+        ;; Save to storage
+        (when (satisfies? storage/IStorageSave storage)
+          (storage/save storage))
 
-             (instance? nebsearch.memory_storage.MemoryStorage storage)
-             (memory-storage/set-root-offset! storage root-offset))
-
-           ;; Save to storage
-           (when (satisfies? nebsearch.storage/IStorageSave storage)
-             (nebsearch.storage/save storage))
-
-           {:root-offset root-offset
-            :index (:index index)
-            :ids (:ids index)
-            :pos-boundaries (:pos-boundaries index)})))
-     :cljs
-     (throw (ex-info "store not supported in ClojureScript" {}))))
+        {:root-offset root-offset
+         :index (:index index)
+         :ids (:ids index)
+         :pos-boundaries (:pos-boundaries index)}))))
 
 (defn restore
   "Restore an index from storage using a reference.
@@ -280,6 +272,7 @@
   reference with structural sharing.
 
   Example:
+    (require '[nebsearch.disk-storage :as disk-storage])
     (def storage (disk-storage/open-disk-storage \"index.dat\" 128 false))
     (def idx-lazy (restore storage ref))
     ;; Works transparently
@@ -800,7 +793,7 @@
                               (last (meta/read-version-log index-path)))
                loaded-version (:version metadata)]
 
-           ;; Open B-tree with disk storage
+           ;; Open B-tree with disk storage (backward compatibility)
            (let [storage (disk-storage/open-disk-storage index-path bt/btree-order false)
                  btree (bt/open-btree storage)
                  pos-boundaries (build-pos-boundaries (:ids metadata) (:index metadata))]

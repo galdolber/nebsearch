@@ -65,6 +65,18 @@
     Returns:
     - metadata map or nil if not found"))
 
+(defprotocol IStorageRoot
+  "Protocol for managing root offset in storage.
+
+  Storage implementations should track the current root offset
+  separately from the B-tree structure."
+
+  (set-root-offset [this offset]
+    "Set the root offset in storage (not saved until explicit save call)")
+
+  (get-root-offset [this]
+    "Get the current root offset from storage"))
+
 (defprotocol IStorageSave
   "Protocol for explicit save operations.
 

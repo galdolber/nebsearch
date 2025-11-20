@@ -354,12 +354,9 @@
 
        Returns: DurableBTree instance using the provided storage"
        [storage]
-       ;; Try to get root offset from storage if it supports it
-       (let [root-offset (try
-                          (let [get-root-fn (resolve 'nebsearch.disk-storage/get-root-offset)]
-                            (when get-root-fn
-                              (get-root-fn storage)))
-                          (catch Exception _ nil))]
+       ;; Try to get root offset from storage if it supports IStorageRoot
+       (let [root-offset (when (satisfies? storage/IStorageRoot storage)
+                          (storage/get-root-offset storage))]
          (->DurableBTree storage root-offset)))
 
      (defn close-btree [btree]
@@ -401,15 +398,11 @@
         This is the ONLY way to make changes durable.
         All bt-insert, bt-delete operations are in-memory until this is called."
        (when-let [stor (:storage btree)]
+         ;; Update storage with current root offset if it supports IStorageRoot
+         (when (satisfies? storage/IStorageRoot stor)
+           (storage/set-root-offset stor (:root-offset btree)))
+         ;; Explicitly save if it supports IStorageSave
          (when (satisfies? storage/IStorageSave stor)
-           ;; Update storage with current root offset if it supports it
-           (try
-             ;; Try to call set-root-offset! (disk storage specific)
-             (let [set-root-fn (resolve 'nebsearch.disk-storage/set-root-offset!)]
-               (when set-root-fn
-                 (set-root-fn stor (:root-offset btree))))
-             (catch Exception _))  ;; Ignore if not supported
-           ;; Explicitly save
            (storage/save stor)))
        btree)
 

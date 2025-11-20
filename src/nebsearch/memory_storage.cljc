@@ -31,6 +31,16 @@
           (assoc :offset address))
       (throw (ex-info "Node not found" {:address address}))))
 
+  storage/IStorageRoot
+  (set-root-offset [this offset]
+    "Set the root offset in storage"
+    (reset! *root-offset offset)
+    this)
+
+  (get-root-offset [this]
+    "Get the current root offset from storage"
+    @*root-offset)
+
   storage/IStorageMetadata
   (store-metadata [this metadata]
     "Store metadata in memory"
@@ -68,15 +78,3 @@
                    (atom 0)        ;; counter starts at 0
                    (atom nil)      ;; no root yet
                    (atom nil)))    ;; no metadata yet
-
-;; Helper functions
-(defn get-root-offset
-  "Get the current root offset from storage"
-  [^MemoryStorage storage]
-  @(.-*root-offset storage))
-
-(defn set-root-offset!
-  "Set the root offset in storage"
-  [^MemoryStorage storage offset]
-  (reset! (.-*root-offset storage) offset)
-  storage)

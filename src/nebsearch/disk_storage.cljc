@@ -114,10 +114,19 @@
                    (swap! node-cache assoc address node)
                    node))))))
 
+       storage/IStorageRoot
+       (set-root-offset [this offset]
+         "Set the root offset in storage (not saved until explicit save call)"
+         (reset! root-offset-atom offset)
+         this)
+
+       (get-root-offset [this]
+         "Get the current root offset from storage"
+         @root-offset-atom)
+
        storage/IStorageSave
        (save [this]
-         "Explicitly save the current root offset to disk header.
-          Note: Call set-root-offset! before save to update the root."
+         "Explicitly save the current root offset to disk header"
          (let [root-offset @root-offset-atom]
            ;; Count nodes by traversing from root
            (let [node-count (if root-offset
@@ -182,24 +191,10 @@
                             (atom (:root-offset header))
                             (:order header)))))))
 
-     ;; Helper functions for getting/setting root offset
-     (defn get-root-offset
-       "Get the current root offset from storage"
-       [^DiskStorage storage]
-       @(.root-offset-atom storage))
-
-     (defn set-root-offset!
-       "Set the root offset in storage (not saved until explicit save call)"
-       [^DiskStorage storage offset]
-       (reset! (.root-offset-atom storage) offset)
-       storage)))
+     ))
 
 ;; ClojureScript stubs
 #?(:cljs
    (do
      (defn open-disk-storage [file-path]
-       (throw (ex-info "Disk storage not supported in ClojureScript" {})))
-
-     (defn get-root-offset [storage] nil)
-
-     (defn set-root-offset! [storage offset] storage)))
+       (throw (ex-info "Disk storage not supported in ClojureScript" {})))))
