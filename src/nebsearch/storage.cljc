@@ -91,3 +91,20 @@
     - :node-count - number of nodes stored
     - :cache-size - number of cached nodes
     - :size - total size in bytes (if applicable)"))
+
+(defprotocol IStorageInvertedStrategy
+  "Protocol for determining inverted index build strategy.
+
+  Different storage types have different performance characteristics:
+  - Ephemeral storage (memory): Lazy inverted index (build on first search)
+  - Persistent storage (disk): Pre-computed inverted index (build during search-add)
+
+  This allows the storage to indicate its preference."
+
+  (precompute-inverted? [this]
+    "Returns true if inverted index should be pre-computed during search-add,
+    false if it should be built lazily on first search.
+
+    Implementations should return:
+    - false: For ephemeral/memory storage (lazy is fine, you're rebuilding anyway)
+    - true: For persistent storage (pay cost upfront for consistent fast searches)"))

@@ -57,7 +57,12 @@
     {:type :memory
      :node-count (count @*storage)
      :root-offset @*root-offset
-     :size-bytes (reduce + (map #(count %) (vals @*storage)))}))
+     :size-bytes (reduce + (map #(count %) (vals @*storage)))})
+
+  storage/IStorageInvertedStrategy
+  (precompute-inverted? [this]
+    "Memory storage uses lazy inverted index (build on first search)"
+    false))
 
 (defn create-memory-storage
   "Create a new in-memory storage instance.
