@@ -221,22 +221,20 @@
                  (recur (nth children idx))))))))
 
      (defn- bt-seq-impl [btree]
-       "Return lazy seq of all entries"
+       "Return lazy seq of all entries by traversing tree structure (not next-leaf pointers).
+        This is correct for COW trees where next-leaf pointers may point to old versions."
        (when-let [root-off (:root-offset btree)]
-         ;; Find leftmost leaf
-         (let [leftmost-leaf
-               (loop [node-offset root-off]
-                 (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
-                   (case (:type node)
-                     :leaf node
-                     :internal (recur (first (:children node))))))]
-           ;; Lazily traverse leaves
-           (letfn [(leaf-seq [leaf]
-                     (lazy-seq
-                      (concat (:entries leaf)
-                              (when-let [next-off (:next-leaf leaf)]
-                                (leaf-seq (read-node (:raf btree) next-off (:node-cache btree)))))))]
-             (leaf-seq leftmost-leaf)))))
+         (letfn [(node-seq [node-offset]
+                   (lazy-seq
+                    (let [node (read-node (:raf btree) node-offset (:node-cache btree))]
+                      (case (:type node)
+                        :leaf
+                        (:entries node)
+
+                        :internal
+                        ;; Recursively get entries from all children
+                        (mapcat node-seq (:children node))))))]
+           (node-seq root-off))))
 
      ;; COW insert operation
      (defn- bt-insert-impl [btree entry]
