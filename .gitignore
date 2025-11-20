@@ -35,3 +35,8 @@ benchmark_results*.txt
 
 # Test output
 test_results*.txt
+
+# Search profiling scripts
+profile_search.clj
+search_perf.clj
+search_profile.clj
