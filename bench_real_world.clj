@@ -309,7 +309,7 @@
           free-after (.freeMemory runtime)
 
           used-memory (- mem-after free-after)
-          index-memory (- (:index idx) "")
+          index-memory (count (:index idx))
           ids-memory (* (count (:ids idx)) 16)
           boundaries-memory (* (count (:pos-boundaries idx)) 24)]
 

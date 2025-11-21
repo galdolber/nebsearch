@@ -125,12 +125,12 @@
   []
   #?(:clj
      (let [storage (mem-storage/create-memory-storage)
-           btree (bt/open-btree storage)
+           btree (bt/->DurableBTree storage nil)
            ;; Memory storage uses lazy inverted index (atom with map)
            ;; Disk storage would use separate B-tree (see restore)
            inverted (if (storage/precompute-inverted? storage)
-                      (bt/open-btree storage)  ; Separate B-tree for pre-computed inverted
-                      (atom {}))]              ; Lazy map for on-demand building
+                      (bt/->DurableBTree storage nil)  ; Separate B-tree for pre-computed inverted
+                      (atom {}))]                      ; Lazy map for on-demand building
        ^{:cache (atom {})
          :storage storage
          :inverted inverted
@@ -238,7 +238,7 @@
       ;; B-tree with different storage or converting - extract entries and create new B-tree
       :else
       (let [;; Create a B-tree with the target storage
-            btree (bt/open-btree storage)
+            btree (bt/->DurableBTree storage nil)
             ;; Extract all entries from current B-tree using bt-seq
             entries (vec (bt/bt-seq data))
             btree-with-data (if (seq entries)
@@ -249,7 +249,7 @@
             inverted-root-offset
             (when (storage/precompute-inverted? storage)
               ;; Target storage wants pre-computed inverted index
-              (let [inverted-btree (bt/open-btree storage)
+              (let [inverted-btree (bt/->DurableBTree storage nil)
                     ;; Extract inverted entries from current inverted index
                     inverted-entries (cond
                                       ;; Source is B-tree (disk -> disk migration)
@@ -323,7 +323,7 @@
                       ;; Disk storage: restore inverted B-tree if it exists
                       (if inverted-root-offset
                         (bt/->DurableBTree storage inverted-root-offset)
-                        (bt/open-btree storage))  ; Empty B-tree if no inverted yet
+                        (bt/->DurableBTree storage nil))  ; Empty B-tree if no inverted yet
                       ;; Memory storage: start with empty lazy map
                       (atom (or (:inverted reference) {})))]
        ^{:cache (atom {})
@@ -484,7 +484,7 @@
               existing-entries (bt/bt-seq data)
               all-data-entries (into existing-entries btree-entries)
               new-data (if (seq all-data-entries)
-                        (bt/bt-bulk-insert (bt/open-btree storage) all-data-entries)
+                        (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-data-entries)
                         data)
               ;; Update inverted index
               inverted (:inverted (meta flex))
@@ -497,7 +497,7 @@
                                      (let [existing-inv-entries (bt/bt-seq inverted)
                                            all-inv-entries (into existing-inv-entries inverted-entries)]
                                        (if (seq all-inv-entries)
-                                         (bt/bt-bulk-insert (bt/open-btree storage) all-inv-entries)
+                                         (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-inv-entries)
                                          inverted))
                                      inverted)
                                :cljs inverted)
