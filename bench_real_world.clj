@@ -3,8 +3,7 @@
             [nebsearch.disk-storage :as disk-storage]
             [nebsearch.storage :as storage]
             [clojure.java.io :as io]
-            [clojure.string :as str]
-            [clojure.edn :as edn])
+            [clojure.string :as str])
   (:import [java.net URL HttpURLConnection]
            [java.util.zip GZIPInputStream]
            [java.io BufferedReader InputStreamReader File]))
@@ -44,24 +43,6 @@
                         title])
                      matches))))
 
-(defn parse-json-lines
-  "Parse JSON lines format (one JSON object per line)"
-  [file]
-  (println "Parsing JSON lines dataset...")
-  (with-open [rdr (io/reader file)]
-    (let [lines (line-seq rdr)
-          docs (vec (keep-indexed
-                     (fn [idx line]
-                       (try
-                         (let [data (clojure.data.json/read-str line :key-fn keyword)]
-                           [(str "doc-" idx)
-                            (str (:title data "") " " (:text data ""))
-                            (:title data "")])
-                         (catch Exception e
-                           nil)))
-                     lines))]
-      (println (format "Parsed %d documents" (count docs)))
-      docs)))
 
 (defn download-and-prepare-dataset []
   (let [dataset-file "dataset.txt"
@@ -107,29 +88,33 @@
         (println "\nERROR: dataset.txt not found. Please download a dataset first.")
         (System/exit 1)))))
 
-(defn parse-dataset [file]
-  (let [content (slurp (io/file file))]
-    (cond
-      ;; Wikipedia abstracts XML format
-      (str/includes? content "<doc>")
-      (parse-wikipedia-abstracts file)
+(defn parse-dataset
+  ([file] (parse-dataset file nil))
+  ([file max-docs]
+   (let [content (slurp (io/file file))
+         parsed-docs (cond
+                       ;; Wikipedia abstracts XML format
+                       (str/includes? content "<doc>")
+                       (parse-wikipedia-abstracts file)
 
-      ;; JSON lines format
-      (str/starts-with? (str/trim content) "{")
-      (parse-json-lines file)
-
-      ;; Simple text format (one doc per line)
-      :else
-      (do
-        (println "Parsing simple text format (one document per line)...")
-        (let [lines (str/split-lines content)
-              docs (vec (map-indexed (fn [idx line]
-                                      [(str "doc-" idx)
-                                       line
-                                       (format "Document %d" idx)])
-                                    (take 100000 lines)))]  ; Limit to 100K docs
-          (println (format "Parsed %d documents" (count docs)))
-          docs)))))
+                       ;; Simple text format (one doc per line)
+                       :else
+                       (do
+                         (println "Parsing simple text format (one document per line)...")
+                         (let [lines (str/split-lines content)
+                               docs (vec (map-indexed (fn [idx line]
+                                                       [(str "doc-" idx)
+                                                        line
+                                                        (format "Document %d" idx)])
+                                                     (take 100000 lines)))]
+                           (println (format "Parsed %d documents" (count docs)))
+                           docs)))]
+     ;; Apply max-docs cap if specified
+     (if max-docs
+       (do
+         (println (format "Capping dataset to %d documents (from %d)" max-docs (count parsed-docs)))
+         (vec (take max-docs parsed-docs)))
+       parsed-docs))))
 
 (defn run-benchmark [docs]
   (println "\n═══════════════════════════════════════════════════════════════")
@@ -203,8 +188,10 @@
 
       ;; Single document adds
       (let [start (System/nanoTime)
-            _ (doseq [doc single-adds]
-                (neb/search-add idx [doc]))
+            _ (reduce (fn [current-idx doc]
+                       (neb/search-add current-idx [doc]))
+                     idx
+                     single-adds)
             duration (- (System/nanoTime) start)
             avg-per-doc (/ duration (count single-adds))]
         (swap! results assoc
@@ -384,20 +371,27 @@
       (println "\n═══════════════════════════════════════════════════════════════"))))
 
 ;; Main execution
-(defn -main []
+(defn -main [& args]
   (try
-    (let [dataset-file (download-and-prepare-dataset)
-          docs (parse-dataset dataset-file)]
+    (let [max-docs (when (first args)
+                    (try
+                      (Integer/parseInt (first args))
+                      (catch Exception e nil)))
+          dataset-file (download-and-prepare-dataset)
+          docs (parse-dataset dataset-file max-docs)]
 
-      (when (< (count docs) 1000)
+      (when (and (< (count docs) 1000) (not max-docs))
         (println "\nWARNING: Dataset is very small. For realistic benchmark, use at least 10K documents.")
         (println "Continue anyway? (y/n): ")
         (when (not= "y" (str/lower-case (read-line)))
           (System/exit 0)))
+
+      (when max-docs
+        (println (format "\nRunning with capped dataset: %d documents" (count docs))))
 
       (run-benchmark docs))
     (catch Exception e
       (println "\nERROR:" (.getMessage e))
       (.printStackTrace e))))
 
-(-main)
+(apply -main *command-line-args*)

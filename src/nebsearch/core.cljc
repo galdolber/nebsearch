@@ -537,7 +537,16 @@
        current-flex
        (let [^String encoded-w (default-encoder w)
            len #?(:clj (.length encoded-w) :cljs (.-length encoded-w))
-           pos #?(:clj (.length (:index current-flex)) :cljs (.-length (:index current-flex)))
+           ;; Calculate next position: use index length if available, otherwise compute from pos-boundaries
+           pos (let [idx-str (:index current-flex)]
+                 (if (and idx-str (pos? #?(:clj (.length idx-str) :cljs (.-length idx-str))))
+                   ;; Index string available, use its length
+                   #?(:clj (.length idx-str) :cljs (.-length idx-str))
+                   ;; Index string empty (restored from disk), calculate from pos-boundaries
+                   (if-let [last-boundary (last (:pos-boundaries current-flex))]
+                     (let [[last-pos _ last-len] last-boundary]
+                       (+ last-pos last-len 1))  ; position after last entry + join char
+                     0)))  ; Empty index
            entry [pos id encoded-w]
 
            ;; Incremental B-tree insert
