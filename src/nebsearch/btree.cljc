@@ -312,9 +312,9 @@
                _ (Arrays/sort arr)
                ^objects sorted-arr arr
                arr-len (int (alength sorted-arr))]
-           (letfn [(build-leaf-level [entries]
+           (letfn [(build-leaf-level [sorted-arr]
                      "Build all leaf nodes from sorted entries"
-                     (loop [remaining entries
+                     (loop [remaining sorted-arr
                             leaves []]
                        (if (empty? remaining)
                          leaves
@@ -348,7 +348,7 @@
                                                   :max-key (:max-key (last chunk))})))))))]
 
              ;; Build tree bottom-up
-             (let [leaves (build-leaf-level sorted-entries)]
+             (let [leaves (build-leaf-level sorted-arr)]
                (loop [level leaves]
                  (if (<= (count level) 1)
                    ;; Done! We have the root
