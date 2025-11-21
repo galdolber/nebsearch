@@ -55,15 +55,19 @@
 
          (cond
            ;; Deftype InternalNode - use direct field access (zero overhead)
-           ;; Keys are ALWAYS longs - no type checking overhead
            (instance? InternalNode node)
            (let [^InternalNode n node
                  keys (.-keys n)
-                 children (.-children n)]
+                 children (.-children n)
+                 first-key (first keys)
+                 is-long-keys (instance? Long first-key)]
              (.writeByte dos 0) ; internal node type
-             ;; No key-type byte - keys are always longs!
+             (.writeByte dos (if is-long-keys 0 1)) ; key type: 0=long, 1=string
              (.writeInt dos (count keys))
-             (doseq [k keys] (.writeLong dos (long k))) ; Direct long write
+             ;; Serialize keys based on type
+             (if is-long-keys
+               (doseq [k keys] (.writeLong dos k))
+               (doseq [k keys] (write-utf8-string dos k)))
              (.writeInt dos (count children))
              (doseq [c children] (.writeLong dos c)))
 
@@ -214,9 +218,13 @@
 
          (if (= node-type 0)
            ;; Internal node - return InternalNode deftype with :offset in ILookup
-           ;; Keys are ALWAYS longs - no key-type byte!
-           (let [key-count (.readInt dis)
-                 keys (vec (repeatedly key-count #(.readLong dis))) ; Always long keys
+           (let [key-type (.readByte dis)
+                 key-count (.readInt dis)
+                 keys (if (= key-type 0)
+                       ;; Long keys (document B-tree)
+                       (vec (repeatedly key-count #(.readLong dis)))
+                       ;; String keys (inverted index B-tree)
+                       (vec (repeatedly key-count #(read-utf8-string dis))))
                  child-count (.readInt dis)
                  children (vec (repeatedly child-count #(.readLong dis)))
                  node (btree/internal-node keys children)]
