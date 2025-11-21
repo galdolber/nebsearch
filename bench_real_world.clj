@@ -28,20 +28,37 @@
   (println "Download complete!"))
 
 (defn parse-wikipedia-abstracts
-  "Parse Wikipedia abstracts XML format.
+  "Parse Wikipedia abstracts XML format using streaming to avoid loading entire file.
    Each abstract is in format: <doc><title>...</title><abstract>...</abstract></doc>"
-  [file]
+  [file max-docs]
   (println "Parsing Wikipedia abstracts...")
-  (let [content (slurp file)
-        ;; Simple regex-based parsing (not robust XML, but works for abstracts)
-        doc-pattern #"<doc>.*?<title>(.*?)</title>.*?<abstract>(.*?)</abstract>.*?</doc>"
-        matches (re-seq doc-pattern content)]
-    (println (format "Found %d articles" (count matches)))
-    (vec (map-indexed (fn [idx [_ title abstract]]
-                       [(str "doc-" idx)
-                        (str title " " abstract)
-                        title])
-                     matches))))
+  (with-open [rdr (io/reader file)]
+    (let [docs (atom [])
+          current-doc (atom nil)
+          doc-count (atom 0)]
+      (doseq [line (line-seq rdr)]
+        (when (or (nil? max-docs) (< @doc-count max-docs))
+          (when (str/includes? line "<doc>")
+            (reset! current-doc line))
+          (when @current-doc
+            (when-not (= line @current-doc)
+              (swap! current-doc str line)))
+          (when (str/includes? line "</doc>")
+            (let [doc-text @current-doc
+                  title-match (re-find #"<title>(.*?)</title>" doc-text)
+                  abstract-match (re-find #"<abstract>(.*?)</abstract>" doc-text)]
+              (when (and title-match abstract-match)
+                (let [title (second title-match)
+                      abstract (second abstract-match)]
+                  (swap! docs conj [(str "doc-" @doc-count)
+                                   (str title " " abstract)
+                                   title])
+                  (swap! doc-count inc)
+                  (when (zero? (mod @doc-count 10000))
+                    (println (format "  Parsed %d documents..." @doc-count))))))
+            (reset! current-doc nil))))
+      (println (format "Found %d articles" (count @docs)))
+      (vec @docs))))
 
 
 (defn download-and-prepare-dataset []
@@ -91,30 +108,27 @@
 (defn parse-dataset
   ([file] (parse-dataset file nil))
   ([file max-docs]
-   (let [content (slurp (io/file file))
-         parsed-docs (cond
-                       ;; Wikipedia abstracts XML format
-                       (str/includes? content "<doc>")
-                       (parse-wikipedia-abstracts file)
+   ;; First, peek at the file to determine format (without loading entire file)
+   (let [is-xml? (with-open [rdr (io/reader file)]
+                   (let [first-lines (take 10 (line-seq rdr))]
+                     (some #(str/includes? % "<doc>") first-lines)))
+         parsed-docs (if is-xml?
+                       ;; Wikipedia abstracts XML format - use streaming parser
+                       (parse-wikipedia-abstracts file max-docs)
 
-                       ;; Simple text format (one doc per line)
-                       :else
+                       ;; Simple text format (one doc per line) - use streaming
                        (do
                          (println "Parsing simple text format (one document per line)...")
-                         (let [lines (str/split-lines content)
-                               docs (vec (map-indexed (fn [idx line]
-                                                       [(str "doc-" idx)
-                                                        line
-                                                        (format "Document %d" idx)])
-                                                     (take 100000 lines)))]
-                           (println (format "Parsed %d documents" (count docs)))
-                           docs)))]
-     ;; Apply max-docs cap if specified
-     (if max-docs
-       (do
-         (println (format "Capping dataset to %d documents (from %d)" max-docs (count parsed-docs)))
-         (vec (take max-docs parsed-docs)))
-       parsed-docs))))
+                         (with-open [rdr (io/reader file)]
+                           (let [limit (or max-docs 100000)
+                                 docs (vec (map-indexed (fn [idx line]
+                                                         [(str "doc-" idx)
+                                                          line
+                                                          (format "Document %d" idx)])
+                                                       (take limit (line-seq rdr))))]
+                             (println (format "Parsed %d documents" (count docs)))
+                             docs))))]
+     parsed-docs)))
 
 (defn run-benchmark [docs]
   (println "\n═══════════════════════════════════════════════════════════════")
@@ -373,23 +387,41 @@
 ;; Main execution
 (defn -main [& args]
   (try
-    (let [max-docs (when (first args)
-                    (try
-                      (Integer/parseInt (first args))
-                      (catch Exception e nil)))
-          dataset-file (download-and-prepare-dataset)
-          docs (parse-dataset dataset-file max-docs)]
+    (let [dataset-file (download-and-prepare-dataset)
+          file-size (.length (io/file dataset-file))
 
-      (when (and (< (count docs) 1000) (not max-docs))
-        (println "\nWARNING: Dataset is very small. For realistic benchmark, use at least 10K documents.")
-        (println "Continue anyway? (y/n): ")
-        (when (not= "y" (str/lower-case (read-line)))
-          (System/exit 0)))
+          ;; Parse max-docs argument or use default based on file size
+          requested-max-docs (when (first args)
+                              (try
+                                (Integer/parseInt (first args))
+                                (catch Exception e nil)))
 
-      (when max-docs
-        (println (format "\nRunning with capped dataset: %d documents" (count docs))))
+          ;; Default cap: 50K docs for files > 100MB to prevent OOM
+          default-max-docs (if (> file-size (* 100 1024 1024))
+                            50000
+                            nil)
 
-      (run-benchmark docs))
+          max-docs (or requested-max-docs default-max-docs)]
+
+      ;; Inform user about capping
+      (when (and max-docs (not requested-max-docs))
+        (println (format "\n⚠ Large dataset detected (%s)" (format-bytes file-size)))
+        (println (format "  Automatically capping to %d documents to prevent OutOfMemoryError" max-docs))
+        (println "  To override, run with: lein run -m bench-real-world <num-docs>")
+        (println "  Example: lein run -m bench-real-world 100000")
+        (println))
+
+      (let [docs (parse-dataset dataset-file max-docs)]
+        (when (and (< (count docs) 1000) (not max-docs))
+          (println "\nWARNING: Dataset is very small. For realistic benchmark, use at least 10K documents.")
+          (println "Continue anyway? (y/n): ")
+          (when (not= "y" (str/lower-case (read-line)))
+            (System/exit 0)))
+
+        (when max-docs
+          (println (format "\nRunning with capped dataset: %d documents" (count docs))))
+
+        (run-benchmark docs)))
     (catch Exception e
       (println "\nERROR:" (.getMessage e))
       (.printStackTrace e))))
