@@ -307,10 +307,11 @@
        (if (empty? entries)
          btree
          (let [stor (:storage btree)
-               ;; Use Java's Arrays.sort for maximum performance with Comparable deftypes
+               ;; Sort and KEEP as array (3x faster than vec conversion)
                arr (to-array entries)
                _ (Arrays/sort arr)
-               sorted-entries (vec arr)]
+               ^objects sorted-arr arr
+               arr-len (int (alength sorted-arr))]
            (letfn [(build-leaf-level [entries]
                      "Build all leaf nodes from sorted entries"
                      (loop [remaining entries
