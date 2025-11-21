@@ -7,28 +7,25 @@
   - As a reference implementation
 
   Based on the example from tonsky/persistent-sorted-set."
-  (:require [nebsearch.storage :as storage]
-            [clojure.edn :as edn]))
+  (:require [nebsearch.storage :as storage]))
 
-(defrecord MemoryStorage [*storage     ;; atom: {address -> node-edn-string}
+(defrecord MemoryStorage [*storage     ;; atom: {address -> node}
                           *counter     ;; atom: monotonic counter for addresses
                           *root-offset] ;; atom: current root address
   storage/IStorage
   (store [this node]
     "Store a node in memory and return a unique address"
     (let [address (swap! *counter inc)
-          ;; Serialize to EDN string (simulates disk serialization)
-          ;; Remove non-serializable fields: offset, cached, storage, root-offset
-          node-edn (pr-str (dissoc node :offset :cached :storage :root-offset))]
-      (swap! *storage assoc address node-edn)
+          ;; Store node directly in memory (no serialization)
+          ;; Remove non-persistent fields: offset, cached, storage, root-offset
+          clean-node (dissoc node :offset :cached :storage :root-offset)]
+      (swap! *storage assoc address clean-node)
       address))
 
   (restore [this address]
     "Restore a node from memory using its address"
-    (if-let [node-edn (get @*storage address)]
-      (-> node-edn
-          edn/read-string
-          (assoc :offset address))
+    (if-let [node (get @*storage address)]
+      (assoc node :offset address)
       (throw (ex-info "Node not found" {:address address}))))
 
   storage/IStorageRoot
@@ -54,10 +51,12 @@
   storage/IStorageStats
   (storage-stats [this]
     "Get storage statistics"
-    {:type :memory
-     :node-count (count @*storage)
-     :root-offset @*root-offset
-     :size-bytes (reduce + (map #(count %) (vals @*storage)))})
+    (let [node-count (count @*storage)]
+      {:type :memory
+       :node-count node-count
+       :root-offset @*root-offset
+       ;; Approximate size (nodes * avg size) - not exact but reasonable for stats
+       :size-bytes (* node-count 100)}))
 
   storage/IStorageInvertedStrategy
   (precompute-inverted? [this]
