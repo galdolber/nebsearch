@@ -98,10 +98,8 @@
                        parse-time (- (System/nanoTime) parse-start)]
                    (if batch
                      (let [batch-start (System/nanoTime)
-                           _ (when (zero? (mod batch-num 10))
-                               (println (format "Processing batch %d... (%d docs loaded so far)"
-                                              batch-num total-docs))
-                               (println (format "  Parse time: %s" (format-duration parse-time))))
+                           ;; Show progress for EVERY batch
+                           _ (println (format "Batch %d: parsing..." batch-num))
 
                            ;; Add batch to index
                            add-start (System/nanoTime)
@@ -109,20 +107,32 @@
                            add-time (- (System/nanoTime) add-start)
 
                            ;; Save to disk every 10 batches (now efficient - O(1) fast path)
-                           [saved-idx saved-ref] (if (zero? (mod batch-num 10))
-                                                    (let [save-start (System/nanoTime)
-                                                          ref (neb/store new-idx storage)
-                                                          save-time (- (System/nanoTime) save-start)
+                           [saved-idx saved-ref save-time restore-time]
+                           (if (zero? (mod batch-num 10))
+                             (let [save-start (System/nanoTime)
+                                   ref (neb/store new-idx storage)
+                                   save-time (- (System/nanoTime) save-start)
 
-                                                          restore-start (System/nanoTime)
-                                                          restored-idx (neb/restore storage ref)
-                                                          restore-time (- (System/nanoTime) restore-start)]
-                                                      (println (format "  Index ops: add=%s, save=%s, restore=%s"
-                                                                     (format-duration add-time)
-                                                                     (format-duration save-time)
-                                                                     (format-duration restore-time)))
-                                                      [restored-idx ref])
-                                                    [new-idx last-ref])
+                                   restore-start (System/nanoTime)
+                                   restored-idx (neb/restore storage ref)
+                                   restore-time (- (System/nanoTime) restore-start)]
+                               [restored-idx ref save-time restore-time])
+                             [new-idx last-ref 0 0])
+
+                           total-batch-time (- (System/nanoTime) batch-start)
+                           _ (if (zero? (mod batch-num 10))
+                               (println (format "  parse=%s, add=%s, save=%s, restore=%s | total=%s (%d docs)"
+                                              (format-duration parse-time)
+                                              (format-duration add-time)
+                                              (format-duration save-time)
+                                              (format-duration restore-time)
+                                              (format-duration total-batch-time)
+                                              (+ total-docs (count batch))))
+                               (println (format "  parse=%s, add=%s | total=%s (%d docs)"
+                                              (format-duration parse-time)
+                                              (format-duration add-time)
+                                              (format-duration total-batch-time)
+                                              (+ total-docs (count batch)))))
 
                            batch-time (- (System/nanoTime) batch-start)
                            new-total (+ total-docs (count batch))]
