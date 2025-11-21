@@ -398,11 +398,13 @@
                                               ;; Array slicing (2-3x faster than take/drop)
                                               chunk-arr (Arrays/copyOfRange sorted-arr offset end)
                                               chunk-vec (vec chunk-arr)
-                                              ;; Cache first/last - extract long keys directly (no tuple destructuring)
-                                              ^nebsearch.entries.DocumentEntry first-entry (aget chunk-arr 0)
-                                              ^nebsearch.entries.DocumentEntry last-entry (aget chunk-arr (int (dec (alength chunk-arr))))
-                                              first-key (.-pos first-entry) ;; Direct field access to long key
-                                              last-key (.-pos last-entry)   ;; Direct field access to long key
+                                              ;; Cache first/last - extract keys via protocol (works for both entry types)
+                                              ;; DocumentEntry: first returns pos (long)
+                                              ;; InvertedEntry: first returns word (string)
+                                              first-entry (aget chunk-arr 0)
+                                              last-entry (aget chunk-arr (int (dec (alength chunk-arr))))
+                                              first-key (first first-entry)  ;; Protocol-based key extraction
+                                              last-key (first last-entry)    ;; Works for both DocumentEntry and InvertedEntry
                                               leaf (leaf-node chunk-vec nil)]
                                           (recur end
                                                  (conj! leaves {:node leaf
