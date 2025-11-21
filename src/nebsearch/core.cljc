@@ -6,7 +6,8 @@
             [nebsearch.storage :as storage]
             [nebsearch.entries :as entries]
             #?(:clj [nebsearch.memory-storage :as mem-storage]))
-  #?(:clj (:import [nebsearch.entries DocumentEntry InvertedEntry])))
+  #?(:clj (:import [nebsearch.entries DocumentEntry InvertedEntry]
+                   [java.util Arrays])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -354,11 +355,14 @@
   "Build sorted vector of [position, doc-id, text-length] from :ids map.
    Enables binary search to find which document contains a given position."
   [ids index]
-  (vec (sort-by first
-                (map (fn [[id pos]]
-                       (let [len (find-len index pos)]
-                         (entries/->DocumentEntry pos id len)))
-                     ids))))
+  ;; Use Arrays.sort for maximum performance with Comparable deftypes
+  (let [entries (map (fn [[id pos]]
+                      (let [len (find-len index pos)]
+                        (entries/->DocumentEntry pos id len)))
+                    ids)
+        arr (to-array entries)]
+    (Arrays/sort arr)
+    (vec arr)))
 
 (defn- find-doc-at-pos
   "Find document ID at given position using binary search.

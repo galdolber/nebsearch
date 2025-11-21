@@ -12,7 +12,10 @@
             [nebsearch.storage :as storage])
   #?(:clj (:import [java.io RandomAccessFile File]
                    [java.nio ByteBuffer]
-                   [java.util.zip CRC32])))
+                   [java.util.zip CRC32]
+                   [java.util Arrays])))
+
+#?(:clj (set! *warn-on-reflection* true))
 
 ;; B-tree configuration
 (def ^:const btree-order 128) ;; Max children per internal node
@@ -186,7 +189,10 @@
                          ;; Insert into leaf
                          (let [entries (:entries node)
                                ;; Sort by full entry [pos id], not just position
-                               new-entries (vec (sort (conj entries entry)))]
+                               ;; Use Arrays.sort for maximum performance with Comparable deftypes
+                               arr (to-array (conj entries entry))
+                               _ (Arrays/sort arr)
+                               new-entries (vec arr)]
                            (if (<= (count new-entries) leaf-capacity)
                              ;; Fits in leaf, write new version
                              (let [new-leaf (leaf-node new-entries (:next-leaf node))
@@ -301,7 +307,10 @@
        (if (empty? entries)
          btree
          (let [stor (:storage btree)
-               sorted-entries (vec (sort entries))]
+               ;; Use Java's Arrays.sort for maximum performance with Comparable deftypes
+               arr (to-array entries)
+               _ (Arrays/sort arr)
+               sorted-entries (vec arr)]
            (letfn [(build-leaf-level [entries]
                      "Build all leaf nodes from sorted entries"
                      (loop [remaining entries
