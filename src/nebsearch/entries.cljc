@@ -144,7 +144,7 @@
 
        clojure.lang.Seqable
        (seq [this]
-         (list word-hash word doc-id)))
+         (list word-hash doc-id word)))
 
      ;; Custom print method for EDN serialization (MemoryStorage compatibility)
      (defmethod print-method InvertedEntry [entry ^java.io.Writer w]

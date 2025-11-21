@@ -507,16 +507,15 @@
               ;; Update inverted index
               inverted (:inverted (meta flex))
               new-inverted (cond
-                            ;; Pre-computed B-tree (disk storage) - bulk insert all entries
+                            ;; Pre-computed B-tree (disk storage) - INCREMENTAL inserts (no sorting!)
                             (and precompute? (seq inverted-entries))
                             #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     ;; IMPORTANT: bt-bulk-insert builds NEW tree from scratch!
-                                     ;; Must merge existing + new inverted entries
-                                     (let [existing-inv-entries (bt/bt-seq inverted)
-                                           all-inv-entries (into existing-inv-entries inverted-entries)]
-                                       (if (seq all-inv-entries)
-                                         (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-inv-entries)
-                                         inverted))
+                                     ;; Use bt-insert for each entry - NO SORTING!
+                                     ;; B-tree auto-balances, O(log n) per insert
+                                     (reduce (fn [inv-tree entry]
+                                              (bt/bt-insert inv-tree entry))
+                                            inverted
+                                            inverted-entries)
                                      inverted)
                                :cljs inverted)
 
