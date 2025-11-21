@@ -92,49 +92,53 @@
                       total-docs 0
                       batch-num 0
                       last-ref initial-ref]
-                 (if-let [batch (first batches)]
-                   (let [batch-start (System/nanoTime)
-                         _ (when (zero? (mod batch-num 10))
-                             (println (format "Processing batch %d... (%d docs loaded so far)"
-                                            batch-num total-docs)))
+                 ;; Time the lazy sequence realization (parsing)
+                 (let [parse-start (System/nanoTime)
+                       batch (first batches)
+                       parse-time (- (System/nanoTime) parse-start)]
+                   (if batch
+                     (let [batch-start (System/nanoTime)
+                           _ (when (zero? (mod batch-num 10))
+                               (println (format "Processing batch %d... (%d docs loaded so far)"
+                                              batch-num total-docs))
+                               (println (format "  Parse time: %s" (format-duration parse-time))))
 
-                         ;; Add batch to index
-                         add-start (System/nanoTime)
-                         new-idx (neb/search-add idx batch)
-                         add-time (- (System/nanoTime) add-start)
+                           ;; Add batch to index
+                           add-start (System/nanoTime)
+                           new-idx (neb/search-add idx batch)
+                           add-time (- (System/nanoTime) add-start)
 
-                         ;; Save to disk every 10 batches (now efficient - O(1) fast path)
-                         [saved-idx saved-ref] (if (zero? (mod batch-num 10))
-                                                  (let [save-start (System/nanoTime)
-                                                        ref (neb/store new-idx storage)
-                                                        save-time (- (System/nanoTime) save-start)
+                           ;; Save to disk every 10 batches (now efficient - O(1) fast path)
+                           [saved-idx saved-ref] (if (zero? (mod batch-num 10))
+                                                    (let [save-start (System/nanoTime)
+                                                          ref (neb/store new-idx storage)
+                                                          save-time (- (System/nanoTime) save-start)
 
-                                                        restore-start (System/nanoTime)
-                                                        restored-idx (neb/restore storage ref)
-                                                        restore-time (- (System/nanoTime) restore-start)]
-                                                    (println (format "  Times: add=%s, save=%s, restore=%s, total=%s"
-                                                                   (format-duration add-time)
-                                                                   (format-duration save-time)
-                                                                   (format-duration restore-time)
-                                                                   (format-duration (- (System/nanoTime) batch-start))))
-                                                    [restored-idx ref])
-                                                  [new-idx last-ref])
+                                                          restore-start (System/nanoTime)
+                                                          restored-idx (neb/restore storage ref)
+                                                          restore-time (- (System/nanoTime) restore-start)]
+                                                      (println (format "  Index ops: add=%s, save=%s, restore=%s"
+                                                                     (format-duration add-time)
+                                                                     (format-duration save-time)
+                                                                     (format-duration restore-time)))
+                                                      [restored-idx ref])
+                                                    [new-idx last-ref])
 
-                         batch-time (- (System/nanoTime) batch-start)
-                         new-total (+ total-docs (count batch))]
-                     (recur (rest batches) saved-idx new-total (inc batch-num) saved-ref))
-                   ;; No more batches - final save
-                   (do
-                     (println (format "\nFinal save to disk..."))
-                     (let [final-start (System/nanoTime)
-                           ref (neb/store idx storage)
-                           final-time (- (System/nanoTime) final-start)]
-                       (println (format "  Final save: %s" (format-duration final-time)))
-                       {:index idx
-                        :storage storage
-                        :ref ref
-                        :total-docs total-docs
-                        :batches-processed batch-num}))))
+                           batch-time (- (System/nanoTime) batch-start)
+                           new-total (+ total-docs (count batch))]
+                       (recur (rest batches) saved-idx new-total (inc batch-num) saved-ref))
+                     ;; No more batches - final save
+                     (do
+                       (println (format "\nFinal save to disk..."))
+                       (let [final-start (System/nanoTime)
+                             ref (neb/store idx storage)
+                             final-time (- (System/nanoTime) final-start)]
+                         (println (format "  Final save: %s" (format-duration final-time)))
+                         {:index idx
+                          :storage storage
+                          :ref ref
+                          :total-docs total-docs
+                          :batches-processed batch-num})))))
 
         total-time (- (System/nanoTime) start-time)
         index-file-size (.length (io/file index-file))]
