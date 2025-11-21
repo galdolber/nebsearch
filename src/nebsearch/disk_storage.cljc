@@ -54,10 +54,17 @@
 
          (if (= (:type node-data) :internal)
            ;; Internal node: keys + children
+           ;; Keys can be either Long (document B-tree) or String (inverted index)
            (let [keys (:keys node-data)
-                 children (:children node-data)]
+                 children (:children node-data)
+                 first-key (first keys)
+                 is-long-keys (instance? Long first-key)]
+             ;; Write key type: 0=Long, 1=String
+             (.writeByte dos (if is-long-keys 0 1))
              (.writeInt dos (count keys))
-             (doseq [k keys] (.writeLong dos k))
+             (if is-long-keys
+               (doseq [k keys] (.writeLong dos k))
+               (doseq [k keys] (write-string dos k)))
              (.writeInt dos (count children))
              (doseq [c children] (.writeLong dos c))))
 
@@ -140,8 +147,13 @@
 
          (if (= node-type 0)
            ;; Internal node
-           (let [key-count (.readInt dis)
-                 keys (vec (repeatedly key-count #(.readLong dis)))
+           (let [key-type (.readByte dis)
+                 key-count (.readInt dis)
+                 keys (if (= key-type 0)
+                       ;; Long keys (document B-tree)
+                       (vec (repeatedly key-count #(.readLong dis)))
+                       ;; String keys (inverted index B-tree)
+                       (vec (repeatedly key-count #(read-utf8-string dis))))
                  child-count (.readInt dis)
                  children (vec (repeatedly child-count #(.readLong dis)))]
              {:type :internal

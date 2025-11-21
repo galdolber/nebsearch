@@ -369,7 +369,8 @@
               entry (nth pos-boundaries mid)
               start-pos (entries/doc-entry-pos entry)
               doc-id (entries/doc-entry-id entry)
-              text-len (count (entries/doc-entry-text entry))
+              ;; For boundaries, text field contains the length (integer), not actual text
+              text-len (entries/doc-entry-text entry)
               end-pos (+ start-pos text-len)]
           (cond
             (and (>= pos start-pos) (< pos end-pos))
@@ -551,10 +552,12 @@
                    #?(:clj (.length ^String idx-str) :cljs (.-length idx-str))
                    ;; Index string empty (restored from disk), calculate from pos-boundaries
                    (if-let [last-boundary (last (:pos-boundaries current-flex))]
-                     (let [[last-pos _ last-len] last-boundary]
+                     (let [last-pos (entries/doc-entry-pos last-boundary)
+                           ;; For boundaries, text field contains the length (integer), not actual text
+                           last-len (entries/doc-entry-text last-boundary)]
                        (+ last-pos last-len 1))  ; position after last entry + join char
                      0)))  ; Empty index
-           entry [pos id encoded-w]
+           entry (entries/->DocumentEntry pos id encoded-w)
 
            ;; Incremental B-tree insert
            new-data (bt/bt-insert (:data current-flex) entry)
@@ -666,8 +669,7 @@
          ;; Not cached yet - build it by scanning B-tree
          (let [doc-ids (set (keep (fn [entry]
                                     ;; Check if any token in the text contains word as substring
-                                    (let [doc-id (entries/doc-entry-id entry)
-                                          text (entries/doc-entry-text entry)]
+                                    (let [[_ doc-id text] entry]
                                       (when (some #(string/includes? % word) (default-splitter text))
                                         doc-id)))
                                   (bt/bt-seq data)))]
