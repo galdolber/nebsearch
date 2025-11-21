@@ -60,18 +60,32 @@
              (doseq [c children] (.writeLong dos c)))
 
            ;; Leaf node: entries + next-leaf
+           ;; Entries can be either:
+           ;;   - Document B-tree: [pos id text] where pos is Long
+           ;;   - Inverted index B-tree: [word doc-id] where word is String
            (let [entries (:entries node-data)
                  next-leaf (:next-leaf node-data)]
              (.writeInt dos (count entries))
              (doseq [entry entries]
-               (let [[pos id text] entry]
-                 (.writeLong dos pos)
-                 (write-string dos id)
-                 (if text
+               (let [first-elem (first entry)]
+                 (if (instance? Long first-elem)
+                   ;; Document B-tree entry: [pos id text]
                    (do
-                     (.writeBoolean dos true)
-                     (write-string dos text))
-                   (.writeBoolean dos false))))
+                     (.writeByte dos 0) ;; entry type: 0 = document
+                     (let [[pos id text] entry]
+                       (.writeLong dos pos)
+                       (write-string dos id)
+                       (if text
+                         (do
+                           (.writeBoolean dos true)
+                           (write-string dos text))
+                         (.writeBoolean dos false))))
+                   ;; Inverted index B-tree entry: [word doc-id]
+                   (do
+                     (.writeByte dos 1) ;; entry type: 1 = inverted
+                     (let [[word doc-id] entry]
+                       (write-string dos word)
+                       (write-string dos doc-id))))))
              (if next-leaf
                (do
                  (.writeBoolean dos true)
@@ -104,13 +118,20 @@
            (let [entry-count (.readInt dis)
                  entries (vec (repeatedly entry-count
                                          (fn []
-                                           (let [pos (.readLong dis)
-                                                 id (read-string dis)
-                                                 has-text (.readBoolean dis)
-                                                 text (when has-text (read-string dis))]
-                                             (if text
-                                               [pos id text]
-                                               [pos id])))))
+                                           (let [entry-type (.readByte dis)]
+                                             (if (= entry-type 0)
+                                               ;; Document B-tree entry: [pos id text]
+                                               (let [pos (.readLong dis)
+                                                     id (read-string dis)
+                                                     has-text (.readBoolean dis)
+                                                     text (when has-text (read-string dis))]
+                                                 (if text
+                                                   [pos id text]
+                                                   [pos id]))
+                                               ;; Inverted index B-tree entry: [word doc-id]
+                                               (let [word (read-string dis)
+                                                     doc-id (read-string dis)]
+                                                 [word doc-id]))))))
                  has-next-leaf (.readBoolean dis)
                  next-leaf (when has-next-leaf (.readLong dis))]
              {:type :leaf
