@@ -36,7 +36,7 @@
          (.writeInt dos (alength bytes))
          (.write dos bytes)))
 
-     (defn- read-string [^DataInputStream dis]
+     (defn- read-utf8-string [^DataInputStream dis]
        (let [len (.readInt dis)
              bytes (byte-array len)]
          (.readFully dis bytes)
@@ -122,15 +122,15 @@
                                              (if (= entry-type 0)
                                                ;; Document B-tree entry: [pos id text]
                                                (let [pos (.readLong dis)
-                                                     id (read-string dis)
+                                                     id (read-utf8-string dis)
                                                      has-text (.readBoolean dis)
-                                                     text (when has-text (read-string dis))]
+                                                     text (when has-text (read-utf8-string dis))]
                                                  (if text
                                                    [pos id text]
                                                    [pos id]))
                                                ;; Inverted index B-tree entry: [word doc-id]
-                                               (let [word (read-string dis)
-                                                     doc-id (read-string dis)]
+                                               (let [word (read-utf8-string dis)
+                                                     doc-id (read-utf8-string dis)]
                                                  [word doc-id]))))))
                  has-next-leaf (.readBoolean dis)
                  next-leaf (when has-next-leaf (.readLong dis))]
