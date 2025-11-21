@@ -366,7 +366,10 @@
            hi (dec (count pos-boundaries))]
       (when (<= lo hi)
         (let [mid (quot (+ lo hi) 2)
-              [start-pos doc-id text-len] (nth pos-boundaries mid)
+              entry (nth pos-boundaries mid)
+              start-pos (entries/doc-entry-pos entry)
+              doc-id (entries/doc-entry-id entry)
+              text-len (count (entries/doc-entry-text entry))
               end-pos (+ start-pos text-len)]
           (cond
             (and (>= pos start-pos) (< pos end-pos))
@@ -420,7 +423,7 @@
                                               [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
                                             old-cache)))
               updated-ids (apply dissoc ids id-list)
-              updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids-set id))) pos-boundaries)
+              updated-pos-boundaries (filterv (fn [entry] (not (removed-ids-set (entries/doc-entry-id entry)))) pos-boundaries)
               ;; Update inverted index if pre-computing
               inverted (:inverted (meta flex))
               new-inverted (if precompute?
@@ -661,10 +664,12 @@
        (if-let [cached (get @inverted word)]
          cached
          ;; Not cached yet - build it by scanning B-tree
-         (let [doc-ids (set (keep (fn [[_ doc-id text]]
+         (let [doc-ids (set (keep (fn [entry]
                                     ;; Check if any token in the text contains word as substring
-                                    (when (some #(string/includes? % word) (default-splitter text))
-                                      doc-id))
+                                    (let [doc-id (entries/doc-entry-id entry)
+                                          text (entries/doc-entry-text entry)]
+                                      (when (some #(string/includes? % word) (default-splitter text))
+                                        doc-id)))
                                   (bt/bt-seq data)))]
            ;; Cache the exact word for future lookups
            (swap! inverted assoc word doc-ids)
@@ -722,11 +727,14 @@
                                     doc-id-set (set doc-ids)] ;; Convert to set for O(1) lookup
                                 (if (seq doc-ids)
                                   ;; Narrow search range based on matches
-                                  (let [matching-bounds (filter (fn [[_ id _]] (contains? doc-id-set id))
+                                  (let [matching-bounds (filter (fn [entry]
+                                                                 (contains? doc-id-set (entries/doc-entry-id entry)))
                                                                pos-boundaries)
-                                        new-min (long (apply min (map first matching-bounds)))
-                                        new-max (long (reduce (fn [mx [pos _ len]]
-                                                               (max mx (+ pos len)))
+                                        new-min (long (apply min (map entries/doc-entry-pos matching-bounds)))
+                                        new-max (long (reduce (fn [mx entry]
+                                                               (let [pos (entries/doc-entry-pos entry)
+                                                                     len (count (entries/doc-entry-text entry))]
+                                                                 (max mx (+ pos len))))
                                                              0
                                                              matching-bounds))]
                                     (recur ws (conj r doc-id-set)

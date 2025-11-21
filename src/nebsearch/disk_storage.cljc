@@ -69,8 +69,9 @@
                  next-leaf (:next-leaf node-data)]
              (.writeInt dos (count entries))
              (doseq [entry entries]
-               (if (instance? DocumentEntry entry)
-                 ;; Document B-tree entry
+               (cond
+                 ;; Document B-tree entry (deftype)
+                 (instance? DocumentEntry entry)
                  (do
                    (.writeByte dos 0) ;; entry type: 0 = document
                    (let [^DocumentEntry e entry
@@ -84,14 +85,42 @@
                          (.writeBoolean dos true)
                          (write-string dos text))
                        (.writeBoolean dos false))))
-                 ;; Inverted index B-tree entry
+
+                 ;; Inverted index B-tree entry (deftype)
+                 (instance? InvertedEntry entry)
                  (do
                    (.writeByte dos 1) ;; entry type: 1 = inverted
                    (let [^InvertedEntry e entry
                          word (.-word e)
                          doc-id (.-doc-id e)]
                      (write-string dos word)
-                     (write-string dos doc-id)))))
+                     (write-string dos doc-id)))
+
+                 ;; Backwards compatibility: vector entries
+                 (vector? entry)
+                 (let [first-elem (first entry)]
+                   (if (instance? Long first-elem)
+                     ;; Document B-tree entry: [pos id text]
+                     (do
+                       (.writeByte dos 0)
+                       (let [[pos id text] entry]
+                         (.writeLong dos pos)
+                         (write-string dos id)
+                         (if text
+                           (do
+                             (.writeBoolean dos true)
+                             (write-string dos text))
+                           (.writeBoolean dos false))))
+                     ;; Inverted index B-tree entry: [word doc-id]
+                     (do
+                       (.writeByte dos 1)
+                       (let [[word doc-id] entry]
+                         (write-string dos word)
+                         (write-string dos doc-id)))))
+
+                 :else
+                 (throw (ex-info "Unknown entry type in B-tree node"
+                                {:entry entry :type (type entry)}))))
              (if next-leaf
                (do
                  (.writeBoolean dos true)

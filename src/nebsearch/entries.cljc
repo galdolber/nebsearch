@@ -75,6 +75,12 @@
            (list pos id text)
            (list pos id))))
 
+     ;; Custom print method for EDN serialization (MemoryStorage compatibility)
+     (defmethod print-method DocumentEntry [entry ^java.io.Writer w]
+       (.write w (if (.-text entry)
+                  (pr-str [(.-pos entry) (.-id entry) (.-text entry)])
+                  (pr-str [(.-pos entry) (.-id entry)]))))
+
      (deftype InvertedEntry [word doc-id]
        Object
        (equals [this other]
@@ -128,7 +134,11 @@
 
        clojure.lang.Seqable
        (seq [this]
-         (list word doc-id))))
+         (list word doc-id)))
+
+     ;; Custom print method for EDN serialization (MemoryStorage compatibility)
+     (defmethod print-method InvertedEntry [entry ^java.io.Writer w]
+       (.write w (pr-str [(.-word entry) (.-doc-id entry)]))))
 
    :cljs
    (do
