@@ -192,7 +192,7 @@
     (println "───────────────────────────────────────────────────────────────\n")
 
     (let [storage (disk-storage/open-disk-storage "/tmp/realworld-bench.dat" 512 true)
-          ref (neb/restore storage (neb/store (neb/search-add (neb/init) initial-batch) storage))
+          ref (neb/store (neb/search-add (neb/init) initial-batch) storage)
           idx (neb/restore storage ref)
 
           ;; Test different batch sizes
@@ -203,17 +203,17 @@
       ;; Single document adds
       (let [start (System/nanoTime)
             _ (reduce (fn [current-idx doc]
-                       (neb/search-add current-idx [doc]))
-                     idx
-                     single-adds)
+                        (neb/search-add current-idx [doc]))
+                      idx
+                      single-adds)
             duration (- (System/nanoTime) start)
             avg-per-doc (/ duration (count single-adds))]
         (swap! results assoc
                :single-add-avg avg-per-doc
                :single-add-total duration)
         (println (format "  Single docs (100x):  %s total, %s per add"
-                        (format-duration duration)
-                        (format-duration avg-per-doc))))
+                         (format-duration duration)
+                         (format-duration avg-per-doc))))
 
       ;; Micro batches
       (let [batches (partition-all 10 micro-batch)
@@ -223,8 +223,8 @@
             duration (- (System/nanoTime) start)]
         (swap! results assoc :micro-batch-time duration)
         (println (format "  Micro batches (10): %s total, %s per batch"
-                        (format-duration duration)
-                        (format-duration (/ duration (count batches))))))
+                         (format-duration duration)
+                         (format-duration (/ duration (count batches))))))
 
       ;; Medium batch
       (let [start (System/nanoTime)
@@ -232,7 +232,7 @@
             duration (- (System/nanoTime) start)]
         (swap! results assoc :medium-batch-time duration)
         (println (format "  Medium batch (5K):   %s"
-                        (format-duration duration))))
+                         (format-duration duration))))
 
       (storage/close storage))
 
@@ -244,7 +244,8 @@
     (println "───────────────────────────────────────────────────────────────\n")
 
     (let [storage (disk-storage/open-disk-storage "/tmp/realworld-bench.dat" 512 true)
-          ref (neb/restore storage (neb/store (neb/search-add (neb/init) initial-batch) storage))
+
+          ref (neb/store (neb/search-add (neb/init) initial-batch) storage)
           idx (neb/restore storage ref)
 
           ;; Extract common words from documents
@@ -285,8 +286,8 @@
       ;; Multi-word searches
       (println "\n  Multi-word searches:")
       (let [multi-queries (for [w1 (take 10 common-words)
-                               w2 (take 10 common-words)]
-                           (str w1 " " w2))
+                                w2 (take 10 common-words)]
+                            (str w1 " " w2))
             start (System/nanoTime)
             _ (doseq [query multi-queries]
                 (neb/search idx query))
@@ -305,7 +306,7 @@
     (println "───────────────────────────────────────────────────────────────\n")
 
     (let [storage (disk-storage/open-disk-storage "/tmp/realworld-bench.dat" 512 true)
-          ref (neb/restore storage (neb/store (neb/search-add (neb/init) initial-batch) storage))
+          ref (neb/store (neb/search-add (neb/init) initial-batch) storage)
           idx (neb/restore storage ref)
 
           runtime (Runtime/getRuntime)
@@ -344,8 +345,8 @@
       (println "═══════════════════════════════════════════════════════════════\n")
 
       (println (format "Dataset: %d documents, %s total text"
-                      total-docs
-                      (format-bytes total-text-size)))
+                       total-docs
+                       (format-bytes total-text-size)))
       (println)
 
       (println "INITIAL INDEX BUILD:")
@@ -374,9 +375,9 @@
         (println (format "  Add 1M docs (incremental):  ~%.1f minutes" (/ est-1m-time 60000)))
         (println (format "  Add 10M docs (incremental): ~%.1f minutes" (/ est-10m-time 60000)))
         (println (format "  Estimated index size (1M):  ~%s"
-                        (format-bytes (* (:file-size r) (/ 1000000 (:initial-docs r))))))
+                         (format-bytes (* (:file-size r) (/ 1000000 (:initial-docs r))))))
         (println (format "  Estimated index size (10M): ~%s"
-                        (format-bytes (* (:file-size r) (/ 10000000 (:initial-docs r)))))))
+                         (format-bytes (* (:file-size r) (/ 10000000 (:initial-docs r)))))))
 
       (println "\n✓ All operations completed successfully!")
       (println "✓ Substring search working correctly")
