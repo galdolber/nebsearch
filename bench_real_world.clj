@@ -254,46 +254,73 @@
 
           search-queries (take 1000 (cycle common-words))]
 
+      ;; Verify search is working with sample query
+      (let [sample-word (first common-words)
+            sample-result (neb/search idx sample-word)]
+        (println (format "  Sample search for '%s': %d results" sample-word (count sample-result)))
+        (when (empty? sample-result)
+          (println "  ⚠ WARNING: Search returned no results! Debugging info:")
+          (println (format "    Index size: %d docs" (count (:ids idx))))
+          (println (format "    Common words found: %d" (count common-words)))
+          (println (format "    Sample words: %s" (string/join ", " (take 5 common-words))))
+          (println))))
+
       ;; Cold cache searches
       (println "  Cold cache (first-time searches):")
       (let [cold-queries (take 10 common-words)
-            times (atom [])]
+            times (atom [])
+            result-counts (atom [])]
         (doseq [query cold-queries]
           (let [start (System/nanoTime)
                 result (neb/search idx query)
                 duration (- (System/nanoTime) start)]
-            (swap! times conj duration)))
-        (let [avg (/ (reduce + @times) (count @times))]
+            (swap! times conj duration)
+            (swap! result-counts conj (count result))))
+        (let [avg (/ (reduce + @times) (count @times))
+              avg-results (/ (reduce + @result-counts) (count @result-counts))]
           (swap! results assoc :cold-search-avg avg)
-          (println (format "    Average: %s" (format-duration avg)))))
+          (println (format "    Average: %s" (format-duration avg)))
+          (println (format "    Avg results per query: %.1f" (double avg-results)))))
 
       ;; Warm cache searches
       (println "\n  Warm cache (repeated searches):")
-      (let [start (System/nanoTime)
+      (let [results-atom (atom [])
+            start (System/nanoTime)
             _ (doseq [query search-queries]
-                (neb/search idx query))
+                (let [res (neb/search idx query)]
+                  (swap! results-atom conj (count res))))
             duration (- (System/nanoTime) start)
-            avg (/ duration (count search-queries))]
+            avg (/ duration (count search-queries))
+            avg-results (if (seq @results-atom)
+                         (/ (reduce + @results-atom) (count @results-atom))
+                         0)]
         (swap! results assoc
                :warm-search-total duration
                :warm-search-avg avg
                :warm-search-qps (/ (* (count search-queries) 1e9) duration))
         (println (format "    Total (1000 searches): %s" (format-duration duration)))
         (println (format "    Average per search:    %s" (format-duration avg)))
-        (println (format "    Queries per second:    %.0f" (/ (* (count search-queries) 1e9) duration))))
+        (println (format "    Queries per second:    %.0f" (/ (* (count search-queries) 1e9) duration)))
+        (println (format "    Avg results per query: %.1f" (double avg-results))))
 
       ;; Multi-word searches
       (println "\n  Multi-word searches:")
       (let [multi-queries (for [w1 (take 10 common-words)
                                w2 (take 10 common-words)]
                            (str w1 " " w2))
+            results-atom (atom [])
             start (System/nanoTime)
             _ (doseq [query multi-queries]
-                (neb/search idx query))
+                (let [res (neb/search idx query)]
+                  (swap! results-atom conj (count res))))
             duration (- (System/nanoTime) start)
-            avg (/ duration (count multi-queries))]
+            avg (/ duration (count multi-queries))
+            avg-results (if (seq @results-atom)
+                         (/ (reduce + @results-atom) (count @results-atom))
+                         0)]
         (swap! results assoc :multi-word-avg avg)
-        (println (format "    Average: %s" (format-duration avg))))
+        (println (format "    Average: %s" (format-duration avg)))
+        (println (format "    Avg results per query: %.1f" (double avg-results))))
 
       (storage/close storage))
 
