@@ -33,12 +33,22 @@
          (.update crc data)
          (.getValue crc)))
 
-     (defn- write-string [^DataOutputStream dos ^String s]
-       (let [bytes (.getBytes s "UTF-8")]
-         (.writeInt dos (alength bytes))
-         (.write dos bytes)))
+     (defn- write-short-string [^DataOutputStream dos ^String s]
+       "Write short string using Java's optimized writeUTF (max 65535 bytes)"
+       (.writeUTF dos s))
 
-     (defn- read-utf8-string [^DataInputStream dis]
+     (defn- read-short-string [^DataInputStream dis]
+       "Read short string using Java's optimized readUTF"
+       (.readUTF dis))
+
+     (defn- write-long-string [^DataOutputStream dos ^String s]
+       "Write potentially long string with manual UTF-8 encoding"
+       (let [^bytes bytes (.getBytes s "UTF-8")]
+         (.writeInt dos (alength bytes))
+         (.write dos ^bytes bytes)))
+
+     (defn- read-long-string [^DataInputStream dis]
+       "Read potentially long string with manual UTF-8 decoding"
        (let [len (.readInt dis)
              bytes (byte-array len)]
          (.readFully dis bytes)
@@ -64,7 +74,7 @@
              (.writeInt dos (count keys))
              (if is-long-keys
                (doseq [k keys] (.writeLong dos k))
-               (doseq [k keys] (write-string dos k)))
+               (doseq [k keys] (write-short-string dos k)))
              (.writeInt dos (count children))
              (doseq [c children] (.writeLong dos c))))
 
@@ -86,11 +96,11 @@
                          id (.-id e)
                          text (.-text e)]
                      (.writeLong dos pos)
-                     (write-string dos id)
+                     (write-short-string dos id)
                      (if text
                        (do
                          (.writeBoolean dos true)
-                         (write-string dos text))
+                         (write-long-string dos text))
                        (.writeBoolean dos false))))
 
                  ;; Inverted index B-tree entry (deftype)
@@ -100,8 +110,8 @@
                    (let [^InvertedEntry e entry
                          word (.-word e)
                          doc-id (.-doc-id e)]
-                     (write-string dos word)
-                     (write-string dos doc-id)))
+                     (write-short-string dos word)
+                     (write-short-string dos doc-id)))
 
                  ;; Backwards compatibility: vector entries
                  (vector? entry)
@@ -112,18 +122,18 @@
                        (.writeByte dos 0)
                        (let [[pos id text] entry]
                          (.writeLong dos pos)
-                         (write-string dos id)
+                         (write-short-string dos id)
                          (if text
                            (do
                              (.writeBoolean dos true)
-                             (write-string dos text))
+                             (write-long-string dos text))
                            (.writeBoolean dos false))))
                      ;; Inverted index B-tree entry: [word doc-id]
                      (do
                        (.writeByte dos 1)
                        (let [[word doc-id] entry]
-                         (write-string dos word)
-                         (write-string dos doc-id)))))
+                         (write-short-string dos word)
+                         (write-short-string dos doc-id)))))
 
                  :else
                  (throw (ex-info "Unknown entry type in B-tree node"
@@ -151,7 +161,7 @@
                        ;; Long keys (document B-tree)
                        (vec (repeatedly key-count #(.readLong dis)))
                        ;; String keys (inverted index B-tree)
-                       (vec (repeatedly key-count #(read-utf8-string dis))))
+                       (vec (repeatedly key-count #(read-short-string dis))))
                  child-count (.readInt dis)
                  children (vec (repeatedly child-count #(.readLong dis)))]
              {:type :internal
@@ -167,13 +177,13 @@
                                              (if (= entry-type 0)
                                                ;; Document B-tree entry
                                                (let [pos (.readLong dis)
-                                                     id (read-utf8-string dis)
+                                                     id (read-short-string dis)
                                                      has-text (.readBoolean dis)
-                                                     text (when has-text (read-utf8-string dis))]
+                                                     text (when has-text (read-long-string dis))]
                                                  (entries/->DocumentEntry pos id text))
                                                ;; Inverted index B-tree entry
-                                               (let [word (read-utf8-string dis)
-                                                     doc-id (read-utf8-string dis)]
+                                               (let [word (read-short-string dis)
+                                                     doc-id (read-short-string dis)]
                                                  (entries/->InvertedEntry word doc-id)))))))
                  has-next-leaf (.readBoolean dis)
                  next-leaf (when has-next-leaf (.readLong dis))]
