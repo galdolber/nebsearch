@@ -208,7 +208,7 @@
                          ;; Descend into child
                          (let [keys (:keys node)
                                children (:children node)
-                               idx (or (first (keep-indexed (fn [i k] (when (< pos k) i)) keys))
+                               idx (or (first (keep-indexed (fn [i k] (when (neg? (compare pos k)) i)) keys))
                                        (count keys))
                                child-result (insert-into-node (nth children idx) (conj path idx))]
                            (if-not (:split child-result)
@@ -284,7 +284,7 @@
                          :internal
                          (let [keys (:keys node)
                                children (:children node)
-                               idx (or (first (keep-indexed (fn [i k] (when (< pos k) i)) keys))
+                               idx (or (first (keep-indexed (fn [i k] (when (neg? (compare pos k)) i)) keys))
                                        (count keys))
                                new-child-offset (delete-from-node (nth children idx))
                                new-children (assoc children idx new-child-offset)

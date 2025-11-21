@@ -159,7 +159,12 @@
           :file-path file-path
           :root-offset @root-offset-atom
           :cache-size (count @node-cache)
-          :file-size (.length raf)}))
+          :file-size (.length raf)})
+
+       storage/IStorageInvertedStrategy
+       (precompute-inverted? [this]
+         "Disk storage uses pre-computed inverted index (build during search-add)"
+         true))
 
      (defn open-disk-storage
        "Open or create a disk-based storage file.
