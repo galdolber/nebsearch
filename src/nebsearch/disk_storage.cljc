@@ -11,12 +11,14 @@
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
             [nebsearch.storage :as storage]
-            [nebsearch.entries :as entries])
+            [nebsearch.entries :as entries]
+            [nebsearch.btree :as btree])
   #?(:clj (:import [java.io RandomAccessFile File ByteArrayOutputStream ByteArrayInputStream
                     DataOutputStream DataInputStream]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32]
-                   [nebsearch.entries DocumentEntry InvertedEntry])))
+                   [nebsearch.entries DocumentEntry InvertedEntry]
+                   [nebsearch.btree InternalNode LeafNode])))
 
 #?(:clj
    (do
@@ -47,35 +49,33 @@
          (String. bytes "UTF-8")))
 
      (defn- serialize-node [node]
-       "Custom binary serialization optimized for B-tree nodes"
+       "Custom binary serialization optimized for B-tree nodes with direct field access"
        (let [baos (ByteArrayOutputStream.)
-             dos (DataOutputStream. baos)
-             node-data (dissoc node :offset :cached)]
-         ;; Write node type (1 byte: 0=internal, 1=leaf)
-         (.writeByte dos (if (= (:type node-data) :internal) 0 1))
+             dos (DataOutputStream. baos)]
 
-         (if (= (:type node-data) :internal)
-           ;; Internal node: keys + children
-           ;; Keys can be either Long (document B-tree) or String (inverted index)
-           (let [keys (:keys node-data)
-                 children (:children node-data)
+         (cond
+           ;; Deftype InternalNode - use direct field access (zero overhead)
+           (instance? InternalNode node)
+           (let [^InternalNode n node
+                 keys (.-keys n)
+                 children (.-children n)
                  first-key (first keys)
                  is-long-keys (instance? Long first-key)]
-             ;; Write key type: 0=Long, 1=String
-             (.writeByte dos (if is-long-keys 0 1))
+             (.writeByte dos 0) ; internal node type
+             (.writeByte dos (if is-long-keys 0 1)) ; key type
              (.writeInt dos (count keys))
              (if is-long-keys
                (doseq [k keys] (.writeLong dos k))
                (doseq [k keys] (write-utf8-string dos k)))
              (.writeInt dos (count children))
-             (doseq [c children] (.writeLong dos c))))
+             (doseq [c children] (.writeLong dos c)))
 
-           ;; Leaf node: entries + next-leaf
-           ;; Entries can be either:
-           ;;   - Document B-tree: [pos id text] where pos is Long
-           ;;   - Inverted index B-tree: [word doc-id] where word is String
-           (let [entries (:entries node-data)
-                 next-leaf (:next-leaf node-data)]
+           ;; Deftype LeafNode - use direct field access (zero overhead)
+           (instance? LeafNode node)
+           (let [^LeafNode n node
+                 entries (.-entries n)
+                 next-leaf (.-next-leaf n)]
+             (.writeByte dos 1) ; leaf node type
              (.writeInt dos (count entries))
              (doseq [entry entries]
                (cond
@@ -136,17 +136,87 @@
                  (.writeLong dos next-leaf))
                (.writeBoolean dos false)))
 
+           ;; Backwards compatibility: Map-based nodes
+           :else
+           (let [node-data (dissoc node :offset :cached)]
+             (if (= (:type node-data) :internal)
+               ;; Internal map node
+               (let [keys (:keys node-data)
+                     children (:children node-data)
+                     first-key (first keys)
+                     is-long-keys (instance? Long first-key)]
+                 (.writeByte dos 0) ; internal node type
+                 (.writeByte dos (if is-long-keys 0 1)) ; key type
+                 (.writeInt dos (count keys))
+                 (if is-long-keys
+                   (doseq [k keys] (.writeLong dos k))
+                   (doseq [k keys] (write-utf8-string dos k)))
+                 (.writeInt dos (count children))
+                 (doseq [c children] (.writeLong dos c)))
+               ;; Leaf map node
+               (let [entries (:entries node-data)
+                     next-leaf (:next-leaf node-data)]
+                 (.writeByte dos 1) ; leaf node type
+                 (.writeInt dos (count entries))
+                 (doseq [entry entries]
+                   (cond
+                     (instance? DocumentEntry entry)
+                     (do
+                       (.writeByte dos 0)
+                       (let [^DocumentEntry e entry]
+                         (.writeLong dos (.-pos e))
+                         (write-utf8-string dos (.-id e))
+                         (if (.-text e)
+                           (do
+                             (.writeBoolean dos true)
+                             (write-utf8-string dos (.-text e)))
+                           (.writeBoolean dos false))))
+
+                     (instance? InvertedEntry entry)
+                     (do
+                       (.writeByte dos 1)
+                       (let [^InvertedEntry e entry]
+                         (write-utf8-string dos (.-word e))
+                         (write-utf8-string dos (.-doc-id e))))
+
+                     (vector? entry)
+                     (let [first-elem (first entry)]
+                       (if (instance? Long first-elem)
+                         (do
+                           (.writeByte dos 0)
+                           (let [[pos id text] entry]
+                             (.writeLong dos pos)
+                             (write-utf8-string dos id)
+                             (if text
+                               (do
+                                 (.writeBoolean dos true)
+                                 (write-utf8-string dos text))
+                               (.writeBoolean dos false))))
+                         (do
+                           (.writeByte dos 1)
+                           (let [[word doc-id] entry]
+                             (write-utf8-string dos word)
+                             (write-utf8-string dos doc-id)))))
+
+                     :else
+                     (throw (ex-info "Unknown entry type" {:entry entry}))))
+                 (if next-leaf
+                   (do
+                     (.writeBoolean dos true)
+                     (.writeLong dos next-leaf))
+                   (.writeBoolean dos false))))))
+
          ;; Return serialized bytes
          (.toByteArray baos)))
 
      (defn- deserialize-node [^bytes data offset]
-       "Custom binary deserialization optimized for B-tree nodes"
+       "Custom binary deserialization returns deftype nodes for zero overhead"
        (let [bais (ByteArrayInputStream. data)
              dis (DataInputStream. bais)
              node-type (.readByte dis)]
 
          (if (= node-type 0)
-           ;; Internal node
+           ;; Internal node - return InternalNode deftype with :offset in ILookup
            (let [key-type (.readByte dis)
                  key-count (.readInt dis)
                  keys (if (= key-type 0)
@@ -155,13 +225,12 @@
                        ;; String keys (inverted index B-tree)
                        (vec (repeatedly key-count #(read-utf8-string dis))))
                  child-count (.readInt dis)
-                 children (vec (repeatedly child-count #(.readLong dis)))]
-             {:type :internal
-              :keys keys
-              :children children
-              :offset offset})
+                 children (vec (repeatedly child-count #(.readLong dis)))
+                 node (btree/internal-node keys children)]
+             ;; Store offset as metadata to avoid modifying deftype
+             (vary-meta node assoc :offset offset))
 
-           ;; Leaf node
+           ;; Leaf node - return LeafNode deftype with :offset in metadata
            (let [entry-count (.readInt dis)
                  entries (vec (repeatedly entry-count
                                          (fn []
@@ -178,11 +247,10 @@
                                                      doc-id (read-utf8-string dis)]
                                                  (entries/->InvertedEntry word doc-id)))))))
                  has-next-leaf (.readBoolean dis)
-                 next-leaf (when has-next-leaf (.readLong dis))]
-             {:type :leaf
-              :entries entries
-              :next-leaf next-leaf
-              :offset offset}))))
+                 next-leaf (when has-next-leaf (.readLong dis))
+                 node (btree/leaf-node entries next-leaf)]
+             ;; Store offset as metadata
+             (vary-meta node assoc :offset offset)))))
 
      ;; File header management
      (defn- write-header [^RandomAccessFile raf root-offset node-count btree-order]
@@ -235,8 +303,11 @@
              (.writeInt raf length)
              (.write raf ^bytes node-bytes)
              (.writeInt raf (unchecked-int checksum))
-             ;; Cache the node
-             (swap! node-cache assoc offset (assoc node :offset offset))
+             ;; Cache the node with offset - use metadata for deftypes, assoc for maps
+             (let [cached-node (if (map? node)
+                                (assoc node :offset offset)
+                                (with-meta node (assoc (meta node) :offset offset)))]
+               (swap! node-cache assoc offset cached-node))
              offset)))
 
        (restore [this address]

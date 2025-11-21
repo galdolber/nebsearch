@@ -24,16 +24,87 @@
 (def ^:const header-size 256)
 (def ^:const magic-number "NEBSRCH\0")
 
-;; Node types
-(defn internal-node [keys children]
-  {:type :internal
-   :keys (vec keys)
-   :children (vec children)})
+;; Node types using deftype for zero overhead
+#?(:clj
+   (do
+     (deftype InternalNode [keys children ^:unsynchronized-mutable _meta]
+       Object
+       (equals [this other]
+         (and (instance? InternalNode other)
+              (let [^InternalNode o other]
+                (and (= keys (.-keys o))
+                     (= children (.-children o))))))
 
-(defn leaf-node [entries next-leaf]
-  {:type :leaf
-   :entries (vec entries)
-   :next-leaf next-leaf})
+       clojure.lang.ILookup
+       (valAt [this k]
+         (case k
+           :type :internal
+           :keys keys
+           :children children
+           :offset (when _meta (:offset _meta))
+           nil))
+       (valAt [this k not-found]
+         (case k
+           :type :internal
+           :keys keys
+           :children children
+           :offset (if _meta (:offset _meta) not-found)
+           not-found))
+
+       clojure.lang.IMeta
+       (meta [this] _meta)
+
+       clojure.lang.IObj
+       (withMeta [this m] (InternalNode. keys children m)))
+
+     (deftype LeafNode [entries next-leaf ^:unsynchronized-mutable _meta]
+       Object
+       (equals [this other]
+         (and (instance? LeafNode other)
+              (let [^LeafNode o other]
+                (and (= entries (.-entries o))
+                     (= next-leaf (.-next-leaf o))))))
+
+       clojure.lang.ILookup
+       (valAt [this k]
+         (case k
+           :type :leaf
+           :entries entries
+           :next-leaf next-leaf
+           :offset (when _meta (:offset _meta))
+           nil))
+       (valAt [this k not-found]
+         (case k
+           :type :leaf
+           :entries entries
+           :next-leaf next-leaf
+           :offset (if _meta (:offset _meta) not-found)
+           not-found))
+
+       clojure.lang.IMeta
+       (meta [this] _meta)
+
+       clojure.lang.IObj
+       (withMeta [this m] (LeafNode. entries next-leaf m)))
+
+     (defn internal-node [keys children]
+       (->InternalNode (vec keys) (vec children) nil))
+
+     (defn leaf-node [entries next-leaf]
+       (->LeafNode (vec entries) next-leaf nil)))
+
+   :cljs
+   (do
+     ;; ClojureScript uses maps for now
+     (defn internal-node [keys children]
+       {:type :internal
+        :keys (vec keys)
+        :children (vec children)})
+
+     (defn leaf-node [entries next-leaf]
+       {:type :leaf
+        :entries (vec entries)
+        :next-leaf next-leaf})))
 
 (defn node-type [node]
   (:type node))
