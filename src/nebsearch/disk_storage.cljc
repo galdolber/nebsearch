@@ -11,12 +11,14 @@
   - Explicit save semantics (no automatic flush)"
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
-            [nebsearch.storage :as storage])
+            [nebsearch.storage :as storage]
+            [nebsearch.entries :as entries])
   #?(:clj (:import [java.io RandomAccessFile File ByteArrayOutputStream ByteArrayInputStream
                     DataOutputStream DataInputStream]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32]
-                   [org.iq80.snappy Snappy])))
+                   [org.iq80.snappy Snappy]
+                   [nebsearch.entries DocumentEntry InvertedEntry])))
 
 #?(:clj
    (do
@@ -57,7 +59,7 @@
              (.writeInt dos (count keys))
              (doseq [k keys] (.writeLong dos k))
              (.writeInt dos (count children))
-             (doseq [c children] (.writeLong dos c)))
+             (doseq [c children] (.writeLong dos c))))
 
            ;; Leaf node: entries + next-leaf
            ;; Entries can be either:
@@ -67,30 +69,63 @@
                  next-leaf (:next-leaf node-data)]
              (.writeInt dos (count entries))
              (doseq [entry entries]
-               (let [first-elem (first entry)]
-                 (if (instance? Long first-elem)
-                   ;; Document B-tree entry: [pos id text]
-                   (do
-                     (.writeByte dos 0) ;; entry type: 0 = document
-                     (let [[pos id text] entry]
-                       (.writeLong dos pos)
-                       (write-string dos id)
-                       (if text
-                         (do
-                           (.writeBoolean dos true)
-                           (write-string dos text))
-                         (.writeBoolean dos false))))
-                   ;; Inverted index B-tree entry: [word doc-id]
-                   (do
-                     (.writeByte dos 1) ;; entry type: 1 = inverted
-                     (let [[word doc-id] entry]
-                       (write-string dos word)
-                       (write-string dos doc-id))))))
+               (cond
+                 ;; Document B-tree entry (deftype)
+                 (instance? DocumentEntry entry)
+                 (do
+                   (.writeByte dos 0) ;; entry type: 0 = document
+                   (let [^DocumentEntry e entry
+                         pos (.-pos e)
+                         id (.-id e)
+                         text (.-text e)]
+                     (.writeLong dos pos)
+                     (write-string dos id)
+                     (if text
+                       (do
+                         (.writeBoolean dos true)
+                         (write-string dos text))
+                       (.writeBoolean dos false))))
+
+                 ;; Inverted index B-tree entry (deftype)
+                 (instance? InvertedEntry entry)
+                 (do
+                   (.writeByte dos 1) ;; entry type: 1 = inverted
+                   (let [^InvertedEntry e entry
+                         word (.-word e)
+                         doc-id (.-doc-id e)]
+                     (write-string dos word)
+                     (write-string dos doc-id)))
+
+                 ;; Backwards compatibility: vector entries
+                 (vector? entry)
+                 (let [first-elem (first entry)]
+                   (if (instance? Long first-elem)
+                     ;; Document B-tree entry: [pos id text]
+                     (do
+                       (.writeByte dos 0)
+                       (let [[pos id text] entry]
+                         (.writeLong dos pos)
+                         (write-string dos id)
+                         (if text
+                           (do
+                             (.writeBoolean dos true)
+                             (write-string dos text))
+                           (.writeBoolean dos false))))
+                     ;; Inverted index B-tree entry: [word doc-id]
+                     (do
+                       (.writeByte dos 1)
+                       (let [[word doc-id] entry]
+                         (write-string dos word)
+                         (write-string dos doc-id)))))
+
+                 :else
+                 (throw (ex-info "Unknown entry type in B-tree node"
+                                {:entry entry :type (type entry)}))))
              (if next-leaf
                (do
                  (.writeBoolean dos true)
                  (.writeLong dos next-leaf))
-               (.writeBoolean dos false))))
+               (.writeBoolean dos false)))
 
          ;; Compress with Snappy
          (let [uncompressed (.toByteArray baos)]
@@ -120,18 +155,16 @@
                                          (fn []
                                            (let [entry-type (.readByte dis)]
                                              (if (= entry-type 0)
-                                               ;; Document B-tree entry: [pos id text]
+                                               ;; Document B-tree entry
                                                (let [pos (.readLong dis)
                                                      id (read-utf8-string dis)
                                                      has-text (.readBoolean dis)
                                                      text (when has-text (read-utf8-string dis))]
-                                                 (if text
-                                                   [pos id text]
-                                                   [pos id]))
-                                               ;; Inverted index B-tree entry: [word doc-id]
+                                                 (entries/->DocumentEntry pos id text))
+                                               ;; Inverted index B-tree entry
                                                (let [word (read-utf8-string dis)
                                                      doc-id (read-utf8-string dis)]
-                                                 [word doc-id]))))))
+                                                 (entries/->InvertedEntry word doc-id)))))))
                  has-next-leaf (.readBoolean dis)
                  next-leaf (when has-next-leaf (.readLong dis))]
              {:type :leaf

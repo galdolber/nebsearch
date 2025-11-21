@@ -4,6 +4,7 @@
             [clojure.set :as sets]
             [nebsearch.btree :as bt]
             [nebsearch.storage :as storage]
+            [nebsearch.entries :as entries]
             #?(:clj [nebsearch.memory-storage :as mem-storage])))
 
 #?(:clj (set! *warn-on-reflection* true))
@@ -264,7 +265,7 @@
                                       ;; Build from scratch by scanning main data B-tree
                                       (vec (for [[_ doc-id text] entries
                                                  word (default-splitter text)]
-                                             [word doc-id]))
+                                             (entries/->InvertedEntry word doc-id)))
 
                                       :else [])
                     inverted-with-data (if (seq inverted-entries)
@@ -352,7 +353,7 @@
   (vec (sort-by first
                 (map (fn [[id pos]]
                        (let [len (find-len index pos)]
-                         [pos id len]))
+                         (entries/->DocumentEntry pos id len)))
                      ids))))
 
 (defn- find-doc-at-pos
@@ -365,7 +366,10 @@
            hi (dec (count pos-boundaries))]
       (when (<= lo hi)
         (let [mid (quot (+ lo hi) 2)
-              [start-pos doc-id text-len] (nth pos-boundaries mid)
+              entry (nth pos-boundaries mid)
+              start-pos (entries/doc-entry-pos entry)
+              doc-id (entries/doc-entry-id entry)
+              text-len (count (entries/doc-entry-text entry))
               end-pos (+ start-pos text-len)]
           (cond
             (and (>= pos start-pos) (< pos end-pos))
@@ -419,17 +423,18 @@
                                               [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
                                             old-cache)))
               updated-ids (apply dissoc ids id-list)
-              updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids-set id))) pos-boundaries)
+              updated-pos-boundaries (filterv (fn [entry] (not (removed-ids-set (entries/doc-entry-id entry)))) pos-boundaries)
               ;; Update inverted index if pre-computing
               inverted (:inverted (meta flex))
               new-inverted (if precompute?
                             #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     ;; For B-tree inverted: remove all [word doc-id] entries for removed docs
+                                     ;; For B-tree inverted: remove all entries for removed docs
                                      ;; We need to scan and delete entries matching removed doc IDs
-                                     (reduce (fn [inv-tree [word doc-id]]
-                                              (if (removed-ids-set doc-id)
-                                                (bt/bt-delete inv-tree [word doc-id])
-                                                inv-tree))
+                                     (reduce (fn [inv-tree entry]
+                                              (let [doc-id (entries/inv-entry-doc-id entry)]
+                                                (if (removed-ids-set doc-id)
+                                                  (bt/bt-delete inv-tree entry)
+                                                  inv-tree)))
                                             inverted
                                             (bt/bt-seq inverted))
                                      inverted)
@@ -466,16 +471,16 @@
         (let [^String w (default-encoder w)
               len #?(:clj (.length w) :cljs (.-length w))
               ;; Collect entry for bulk insert
-              entry [pos id w]
+              entry (entries/->DocumentEntry pos id w)
               ;; Extract words for inverted index
               words (default-splitter w)
-              inv-entries (mapv (fn [word] [word id]) words)]
+              inv-entries (mapv (fn [word] (entries/->InvertedEntry word id)) words)]
           (recur ws (+ pos len 1)
                  (conj btree-entries entry)
                  (into inverted-entries inv-entries)
                  (conj r w)
                  (assoc ids id pos)
-                 (conj new-boundaries [pos id len])))
+                 (conj new-boundaries (entries/->DocumentEntry pos id len))))
         ;; Bulk insert all entries into B-tree at once
         (let [new-index (str index (string/join join-char r) join-char)
               updated-pos-boundaries (into pos-boundaries new-boundaries)
@@ -507,11 +512,13 @@
                                :cljs false)
                             #?(:clj
                                ;; Create NEW atom for COW semantics (don't mutate shared atom!)
-                               (atom (reduce (fn [m [word doc-id]]
-                                              ;; Only update if word is already cached
-                                              (if (contains? m word)
-                                                (update m word conj doc-id)
-                                                m))
+                               (atom (reduce (fn [m entry]
+                                              (let [word (entries/inv-entry-word entry)
+                                                    doc-id (entries/inv-entry-doc-id entry)]
+                                                ;; Only update if word is already cached
+                                                (if (contains? m word)
+                                                  (update m word conj doc-id)
+                                                  m)))
                                             @inverted
                                             inverted-entries))
                                :cljs inverted)
@@ -556,11 +563,11 @@
            words (default-splitter encoded-w)
            inverted (:inverted (meta current-flex))
            new-inverted (cond
-                          ;; Pre-computed B-tree (disk storage) - insert each [word doc-id]
+                          ;; Pre-computed B-tree (disk storage) - insert each entry
                           (and precompute? (seq words))
                           #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
                                    (reduce (fn [inv-tree word]
-                                            (bt/bt-insert inv-tree [word id]))
+                                            (bt/bt-insert inv-tree (entries/->InvertedEntry word id)))
                                           inverted
                                           words)
                                    inverted)
@@ -588,7 +595,7 @@
            (assoc :data new-data
                   :index (str (:index current-flex) encoded-w join-char)
                   :ids (assoc (:ids current-flex) id pos)
-                  :pos-boundaries (conj (:pos-boundaries current-flex) [pos id len]))
+                  :pos-boundaries (conj (:pos-boundaries current-flex) (entries/->DocumentEntry pos id len)))
            (vary-meta merge {:cache (atom {}) :inverted new-inverted})))))
    flex
    pairs))
@@ -641,9 +648,11 @@
        :cljs false)
     #?(:clj
        ;; Scan B-tree for all entries where word is substring of token
-       ;; Entries are [word doc-id], filter for substring match
-       (set (keep (fn [[w doc-id]]
-                   (when (string/includes? w word) doc-id))
+       ;; Filter for substring match
+       (set (keep (fn [entry]
+                   (let [w (entries/inv-entry-word entry)
+                         doc-id (entries/inv-entry-doc-id entry)]
+                     (when (string/includes? w word) doc-id)))
                  (bt/bt-seq inverted)))
        :cljs #{})
 
@@ -655,10 +664,12 @@
        (if-let [cached (get @inverted word)]
          cached
          ;; Not cached yet - build it by scanning B-tree
-         (let [doc-ids (set (keep (fn [[_ doc-id text]]
+         (let [doc-ids (set (keep (fn [entry]
                                     ;; Check if any token in the text contains word as substring
-                                    (when (some #(string/includes? % word) (default-splitter text))
-                                      doc-id))
+                                    (let [doc-id (entries/doc-entry-id entry)
+                                          text (entries/doc-entry-text entry)]
+                                      (when (some #(string/includes? % word) (default-splitter text))
+                                        doc-id)))
                                   (bt/bt-seq data)))]
            ;; Cache the exact word for future lookups
            (swap! inverted assoc word doc-ids)
@@ -716,11 +727,14 @@
                                     doc-id-set (set doc-ids)] ;; Convert to set for O(1) lookup
                                 (if (seq doc-ids)
                                   ;; Narrow search range based on matches
-                                  (let [matching-bounds (filter (fn [[_ id _]] (contains? doc-id-set id))
+                                  (let [matching-bounds (filter (fn [entry]
+                                                                 (contains? doc-id-set (entries/doc-entry-id entry)))
                                                                pos-boundaries)
-                                        new-min (long (apply min (map first matching-bounds)))
-                                        new-max (long (reduce (fn [mx [pos _ len]]
-                                                               (max mx (+ pos len)))
+                                        new-min (long (apply min (map entries/doc-entry-pos matching-bounds)))
+                                        new-max (long (reduce (fn [mx entry]
+                                                               (let [pos (entries/doc-entry-pos entry)
+                                                                     len (count (entries/doc-entry-text entry))]
+                                                                 (max mx (+ pos len))))
                                                              0
                                                              matching-bounds))]
                                     (recur ws (conj r doc-id-set)
