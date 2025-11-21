@@ -70,7 +70,8 @@
   (let [file-size (.length (io/file dataset-file))
         _ (println (format "Dataset file: %s" (format-bytes file-size)))
         _ (println (format "Batch size: %d documents" batch-size))
-        _ (println (format "Index file: %s\n" index-file))
+        _ (println (format "Index file: %s" index-file))
+        _ (println "Note: Saving to disk only at the end to avoid O(n²) rebuilds\n")
 
         ;; Clean up old index file
         _ (when (.exists (io/file index-file))
@@ -95,14 +96,6 @@
 
                          ;; Add batch to index
                          new-idx (neb/search-add idx batch)
-
-                         ;; Store to disk every 10 batches (or adjust as needed)
-                         _ (when (zero? (mod batch-num 10))
-                             (let [store-start (System/nanoTime)]
-                               (neb/store new-idx storage)
-                               (let [store-time (- (System/nanoTime) store-start)]
-                                 (println (format "  Saved to disk (%s)"
-                                                (format-duration store-time))))))
 
                          batch-time (- (System/nanoTime) batch-start)
                          new-total (+ total-docs (count batch))]
