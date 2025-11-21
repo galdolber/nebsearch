@@ -307,13 +307,14 @@
        (if (empty? entries)
          btree
          (let [stor (:storage btree)
-               ;; Use Java's Arrays.sort for maximum performance with Comparable deftypes
+               ;; Sort and KEEP as array (3x faster than vec conversion)
                arr (to-array entries)
                _ (Arrays/sort arr)
-               sorted-entries (vec arr)]
-           (letfn [(build-leaf-level [entries]
+               ^objects sorted-arr arr
+               arr-len (int (alength sorted-arr))]
+           (letfn [(build-leaf-level [sorted-arr]
                      "Build all leaf nodes from sorted entries"
-                     (loop [remaining entries
+                     (loop [remaining sorted-arr
                             leaves []]
                        (if (empty? remaining)
                          leaves
@@ -347,7 +348,7 @@
                                                   :max-key (:max-key (last chunk))})))))))]
 
              ;; Build tree bottom-up
-             (let [leaves (build-leaf-level sorted-entries)]
+             (let [leaves (build-leaf-level sorted-arr)]
                (loop [level leaves]
                  (if (<= (count level) 1)
                    ;; Done! We have the root
