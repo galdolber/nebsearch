@@ -3,7 +3,7 @@
 
   Features:
   - RandomAccessFile for efficient random access
-  - Nippy binary serialization (10-100x faster than EDN)
+  - Custom binary serialization (hand-optimized for B-tree nodes)
   - Snappy compression for reduced disk usage
   - CRC32 checksums for data integrity
   - Node caching for performance
@@ -11,9 +11,9 @@
   - Explicit save semantics (no automatic flush)"
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
-            [nebsearch.storage :as storage]
-            #?(:clj [taoensso.nippy :as nippy]))
-  #?(:clj (:import [java.io RandomAccessFile File]
+            [nebsearch.storage :as storage])
+  #?(:clj (:import [java.io RandomAccessFile File ByteArrayOutputStream ByteArrayInputStream
+                    DataOutputStream DataInputStream]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32]
                    [org.iq80.snappy Snappy])))
@@ -31,17 +31,92 @@
          (.update crc data)
          (.getValue crc)))
 
+     (defn- write-string [^DataOutputStream dos ^String s]
+       (let [bytes (.getBytes s "UTF-8")]
+         (.writeInt dos (alength bytes))
+         (.write dos bytes)))
+
+     (defn- read-string [^DataInputStream dis]
+       (let [len (.readInt dis)
+             bytes (byte-array len)]
+         (.readFully dis bytes)
+         (String. bytes "UTF-8")))
+
      (defn- serialize-node [node]
-       "Serialize node using Nippy (fast binary) with Snappy compression"
-       (let [node-data (dissoc node :offset :cached)
-             ;; Nippy with :snappy compression built-in (faster than double compression)
-             bytes (nippy/freeze node-data {:compressor nippy/snappy-compressor})]
-         bytes))
+       "Custom binary serialization optimized for B-tree nodes"
+       (let [baos (ByteArrayOutputStream.)
+             dos (DataOutputStream. baos)
+             node-data (dissoc node :offset :cached)]
+         ;; Write node type (1 byte: 0=internal, 1=leaf)
+         (.writeByte dos (if (= (:type node-data) :internal) 0 1))
+
+         (if (= (:type node-data) :internal)
+           ;; Internal node: keys + children
+           (let [keys (:keys node-data)
+                 children (:children node-data)]
+             (.writeInt dos (count keys))
+             (doseq [k keys] (.writeLong dos k))
+             (.writeInt dos (count children))
+             (doseq [c children] (.writeLong dos c)))
+
+           ;; Leaf node: entries + next-leaf
+           (let [entries (:entries node-data)
+                 next-leaf (:next-leaf node-data)]
+             (.writeInt dos (count entries))
+             (doseq [entry entries]
+               (let [[pos id text] entry]
+                 (.writeLong dos pos)
+                 (write-string dos id)
+                 (if text
+                   (do
+                     (.writeBoolean dos true)
+                     (write-string dos text))
+                   (.writeBoolean dos false))))
+             (if next-leaf
+               (do
+                 (.writeBoolean dos true)
+                 (.writeLong dos next-leaf))
+               (.writeBoolean dos false))))
+
+         ;; Compress with Snappy
+         (let [uncompressed (.toByteArray baos)]
+           (Snappy/compress uncompressed))))
 
      (defn- deserialize-node [^bytes data offset]
-       "Deserialize node from Nippy binary format"
-       (let [node (nippy/thaw data)]
-         (assoc node :offset offset)))
+       "Custom binary deserialization optimized for B-tree nodes"
+       (let [uncompressed (Snappy/uncompress data 0 (alength data))
+             bais (ByteArrayInputStream. uncompressed)
+             dis (DataInputStream. bais)
+             node-type (.readByte dis)]
+
+         (if (= node-type 0)
+           ;; Internal node
+           (let [key-count (.readInt dis)
+                 keys (vec (repeatedly key-count #(.readLong dis)))
+                 child-count (.readInt dis)
+                 children (vec (repeatedly child-count #(.readLong dis)))]
+             {:type :internal
+              :keys keys
+              :children children
+              :offset offset})
+
+           ;; Leaf node
+           (let [entry-count (.readInt dis)
+                 entries (vec (repeatedly entry-count
+                                         (fn []
+                                           (let [pos (.readLong dis)
+                                                 id (read-string dis)
+                                                 has-text (.readBoolean dis)
+                                                 text (when has-text (read-string dis))]
+                                             (if text
+                                               [pos id text]
+                                               [pos id])))))
+                 has-next-leaf (.readBoolean dis)
+                 next-leaf (when has-next-leaf (.readLong dis))]
+             {:type :leaf
+              :entries entries
+              :next-leaf next-leaf
+              :offset offset}))))
 
      ;; File header management
      (defn- write-header [^RandomAccessFile raf root-offset node-count btree-order]
