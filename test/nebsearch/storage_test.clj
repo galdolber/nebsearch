@@ -179,7 +179,9 @@
 
           ;; Restore the index
           (let [idx3 (neb/restore storage ref)]
-            (is (= (:index idx2) (:index idx3)))
+            ;; Index string is empty for disk storage (optimization - saves memory)
+            (is (= "" (:index idx3)))
+            ;; Searches still work perfectly via inverted index
             (is (= #{"doc1"} (neb/search idx3 "hello")))
             (is (= #{"doc2"} (neb/search idx3 "clojure")))))
         (finally

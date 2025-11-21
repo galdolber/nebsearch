@@ -226,8 +226,11 @@
         (when (satisfies? storage/IStorageSave storage)
           (storage/save storage))
 
+        ;; Don't store index string for disk storage with pre-computed inverted index
+        ;; The string is only needed for fallback search, which never triggers with inverted index
+        ;; This saves massive memory (100MB-10GB) for large indexes
         (cond-> {:root-offset root-offset
-                 :index (:index index)
+                 :index (if inverted-root-offset "" (:index index))  ; Empty for disk storage!
                  :ids (:ids index)
                  :pos-boundaries (:pos-boundaries index)}
           inverted-root-offset (assoc :inverted-root-offset inverted-root-offset)))
@@ -276,8 +279,11 @@
         (when (satisfies? storage/IStorageSave storage)
           (storage/save storage))
 
+        ;; Don't store index string for disk storage with pre-computed inverted index
+        ;; The string is only needed for fallback search, which never triggers with inverted index
+        ;; This saves massive memory (100MB-10GB) for large indexes
         (cond-> {:root-offset root-offset
-                 :index (:index index)
+                 :index (if inverted-root-offset "" (:index index))  ; Empty for disk storage!
                  :ids (:ids index)
                  :pos-boundaries (:pos-boundaries index)}
           inverted-root-offset (assoc :inverted-root-offset inverted-root-offset))))))
