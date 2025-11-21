@@ -12,7 +12,6 @@ if [ ! -d "lib" ]; then
   curl -L -o clojure-1.11.1.jar https://repo1.maven.org/maven2/org/clojure/clojure/1.11.1/clojure-1.11.1.jar
   curl -L -o core.specs.alpha-0.2.62.jar https://repo1.maven.org/maven2/org/clojure/core.specs.alpha/0.2.62/core.specs.alpha-0.2.62.jar
   curl -L -o spec.alpha-0.3.218.jar https://repo1.maven.org/maven2/org/clojure/spec.alpha/0.3.218/spec.alpha-0.3.218.jar
-  curl -L -o snappy-0.4.jar https://repo1.maven.org/maven2/org/iq80/snappy/snappy/0.4/snappy-0.4.jar
 
   cd ..
   echo "Dependencies downloaded!"
@@ -37,4 +36,4 @@ fi
 
 # Run with Java
 echo "Running $SCRIPT with Java $JAVA_OPTS..."
-java $JAVA_OPTS -cp "lib/clojure-1.11.1.jar:lib/core.specs.alpha-0.2.62.jar:lib/spec.alpha-0.3.218.jar:lib/snappy-0.4.jar:src" clojure.main "$SCRIPT"
+java $JAVA_OPTS -cp "lib/clojure-1.11.1.jar:lib/core.specs.alpha-0.2.62.jar:lib/spec.alpha-0.3.218.jar:src" clojure.main "$SCRIPT"
