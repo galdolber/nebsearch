@@ -34,9 +34,9 @@ case $choice in
     echo ""
 
     if command -v wget &> /dev/null; then
-      wget -O dataset.xml.gz https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
+        wget -O dataset.xml.gz https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
     elif command -v curl &> /dev/null; then
-      curl -L -o dataset.xml.gz https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
+      curl -L -o dataset.xml.gz https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
     else
       echo "ERROR: Neither wget nor curl found. Please install one of them."
       exit 1
