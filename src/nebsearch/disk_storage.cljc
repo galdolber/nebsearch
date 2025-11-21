@@ -3,6 +3,7 @@
 
   Features:
   - RandomAccessFile for efficient random access
+  - Snappy compression for reduced disk usage
   - CRC32 checksums for data integrity
   - Node caching for performance
   - Atomic updates via write-ahead approach
@@ -12,7 +13,8 @@
             [nebsearch.storage :as storage])
   #?(:clj (:import [java.io RandomAccessFile File]
                    [java.nio ByteBuffer]
-                   [java.util.zip CRC32])))
+                   [java.util.zip CRC32]
+                   [org.iq80.snappy Snappy])))
 
 #?(:clj
    (do
@@ -28,14 +30,16 @@
          (.getValue crc)))
 
      (defn- serialize-node [node]
-       "Serialize node to EDN bytes"
+       "Serialize node to EDN bytes with Snappy compression"
        (let [edn-str (pr-str (dissoc node :offset :cached))
-             bytes (.getBytes edn-str "UTF-8")]
-         bytes))
+             bytes (.getBytes edn-str "UTF-8")
+             compressed (Snappy/compress bytes)]
+         compressed))
 
      (defn- deserialize-node [^bytes data offset]
-       "Deserialize node from EDN bytes"
-       (let [edn-str (String. data "UTF-8")
+       "Deserialize node from EDN bytes with Snappy decompression"
+       (let [decompressed (Snappy/uncompress data 0 (alength data))
+             edn-str (String. decompressed "UTF-8")
              node (edn/read-string edn-str)]
          (assoc node :offset offset)))
 
