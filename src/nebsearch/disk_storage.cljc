@@ -12,7 +12,8 @@
             [clojure.edn :as edn]
             [nebsearch.storage :as storage]
             [nebsearch.entries :as entries]
-            [nebsearch.btree :as btree])
+            [nebsearch.btree :as btree]
+            [nebsearch.compression :as compress])
   #?(:clj (:import [java.io RandomAccessFile File ByteArrayOutputStream ByteArrayInputStream
                     DataOutputStream DataInputStream]
                    [java.nio ByteBuffer]
@@ -245,6 +246,56 @@
              ;; Store offset as metadata
              (vary-meta node assoc :offset offset)))))
 
+     ;; Compression constants
+     (def ^:const compression-threshold 128) ;; Only compress nodes > 128 bytes
+     (def ^:const compression-flag-byte 0x01) ;; Bit 0 = compressed
+
+     (defn- compress-node-bytes [^bytes node-bytes]
+       "Wrap serialized node bytes with compression if beneficial.
+       Format: [flags-byte][original-size (4 bytes if compressed)][data]"
+       (let [original-size (alength node-bytes)]
+         (if (< original-size compression-threshold)
+           ;; Too small, don't compress - add uncompressed flag
+           (let [result (byte-array (inc original-size))]
+             (aset result 0 (byte 0)) ;; flags = 0 (uncompressed)
+             (System/arraycopy node-bytes 0 result 1 original-size)
+             result)
+           ;; Try compression
+           (let [^bytes compressed (compress/compress node-bytes)
+                 compressed-size (alength compressed)
+                 ratio (compress/compression-ratio original-size compressed-size)]
+             (if (> ratio 1.1) ;; Only use if >10% savings
+               ;; Compression beneficial - format: [flags][original-size][compressed-data]
+               (let [result (byte-array (+ 1 4 compressed-size))
+                     ^ByteBuffer bb (ByteBuffer/wrap result)]
+                 (.put bb (byte compression-flag-byte)) ;; flags = 0x01 (compressed)
+                 (.putInt bb (unchecked-int original-size))
+                 (.put bb ^bytes compressed)
+                 result)
+               ;; Compression not beneficial - store uncompressed with flag
+               (let [result (byte-array (inc original-size))]
+                 (aset result 0 (byte 0)) ;; flags = 0 (uncompressed)
+                 (System/arraycopy node-bytes 0 result 1 original-size)
+                 result))))))
+
+     (defn- decompress-node-bytes [^bytes data]
+       "Unwrap node bytes, decompressing if needed.
+       Format: [flags-byte][original-size (4 bytes if compressed)][data]"
+       (let [flags (aget data 0)]
+         (if (= (bit-and flags compression-flag-byte) compression-flag-byte)
+           ;; Compressed - read original size and decompress
+           (let [bb (ByteBuffer/wrap data)
+                 _ (.get bb) ;; skip flags byte
+                 original-size (.getInt bb)
+                 compressed-size (- (alength data) 5)
+                 compressed (byte-array compressed-size)]
+             (.get bb compressed)
+             (compress/decompress compressed original-size))
+           ;; Uncompressed - return data without flags byte
+           (let [result (byte-array (dec (alength data)))]
+             (System/arraycopy data 1 result 0 (dec (alength data)))
+             result))))
+
      ;; File header management
      (defn- write-header [^RandomAccessFile raf root-offset node-count btree-order]
        "Write file header"
@@ -290,11 +341,12 @@
          (let [offset (.length raf)]
            (.seek raf offset)
            (let [^bytes node-bytes (serialize-node node)
-                 checksum (crc32 node-bytes)
-                 length (alength node-bytes)]
+                 ^bytes compressed-bytes (compress-node-bytes node-bytes)
+                 checksum (crc32 compressed-bytes)
+                 length (alength compressed-bytes)]
              ;; Write: length (4) + data (n) + checksum (4)
              (.writeInt raf length)
-             (.write raf ^bytes node-bytes)
+             (.write raf ^bytes compressed-bytes)
              (.writeInt raf (unchecked-int checksum))
              ;; Cache the node with offset - use metadata for deftypes, assoc for maps
              (let [cached-node (if (map? node)
@@ -310,16 +362,17 @@
            (do
              (.seek raf address)
              (let [length (.readInt raf)
-                   node-bytes (byte-array length)]
-               (.read raf node-bytes)
+                   compressed-bytes (byte-array length)]
+               (.read raf compressed-bytes)
                (let [stored-checksum (unchecked-int (.readInt raf))
-                     computed-checksum (unchecked-int (crc32 node-bytes))]
+                     computed-checksum (unchecked-int (crc32 compressed-bytes))]
                  (when (not= stored-checksum computed-checksum)
                    (throw (ex-info "Checksum mismatch"
                                    {:offset address
                                     :stored stored-checksum
                                     :computed computed-checksum})))
-                 (let [node (deserialize-node node-bytes address)]
+                 (let [^bytes node-bytes (decompress-node-bytes compressed-bytes)
+                       node (deserialize-node node-bytes address)]
                    (swap! node-cache assoc address node)
                    node))))))
 
@@ -343,13 +396,14 @@
                                (persistent! results)
                                (let [node (nth nodes i)
                                      ^bytes node-bytes (serialize-node node)
-                                     checksum (crc32 node-bytes)
-                                     length (alength node-bytes)
+                                     ^bytes compressed-bytes (compress-node-bytes node-bytes)
+                                     checksum (crc32 compressed-bytes)
+                                     length (alength compressed-bytes)
                                      ;; Each node: length (4) + data (n) + checksum (4)
                                      node-size (+ 4 length 4)]
                                  (recur (int (inc i))
                                         (conj! results {:node node
-                                                       :bytes node-bytes
+                                                       :bytes compressed-bytes
                                                        :checksum checksum
                                                        :length length
                                                        :size node-size})))))
