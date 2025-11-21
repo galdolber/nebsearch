@@ -71,23 +71,27 @@
         _ (println (format "Dataset file: %s" (format-bytes file-size)))
         _ (println (format "Batch size: %d documents" batch-size))
         _ (println (format "Index file: %s" index-file))
-        _ (println "Note: Saving to disk only at the end to avoid O(n²) rebuilds\n")
+        _ (println "Note: Using disk-backed index for O(1) incremental saves\n")
 
         ;; Clean up old index file
         _ (when (.exists (io/file index-file))
             (println "Deleting old index file...")
             (.delete (io/file index-file)))
 
-        ;; Create storage and initial index
+        ;; Create storage and initial disk-backed index
         storage (disk-storage/open-disk-storage index-file 512 true)
+        ;; IMPORTANT: Start with disk-backed index for efficient incremental saves
+        initial-ref (neb/store (neb/init) storage)
+        initial-idx (neb/restore storage initial-ref)
 
         start-time (System/nanoTime)
 
         ;; Process batches
         result (loop [batches (parse-wikipedia-batch dataset-file batch-size)
-                      idx (neb/init)
+                      idx initial-idx
                       total-docs 0
-                      batch-num 0]
+                      batch-num 0
+                      last-ref initial-ref]
                  (if-let [batch (first batches)]
                    (let [batch-start (System/nanoTime)
                          _ (when (zero? (mod batch-num 10))
@@ -97,13 +101,28 @@
                          ;; Add batch to index
                          new-idx (neb/search-add idx batch)
 
+                         ;; Save to disk every 10 batches (now efficient - O(1) fast path)
+                         [saved-idx saved-ref] (if (zero? (mod batch-num 10))
+                                                  (let [save-start (System/nanoTime)
+                                                        ref (neb/store new-idx storage)
+                                                        save-time (- (System/nanoTime) save-start)
+                                                        ;; Restore to get disk-backed version for next iteration
+                                                        restored-idx (neb/restore storage ref)]
+                                                    (println (format "  Saved to disk (%s)"
+                                                                   (format-duration save-time)))
+                                                    [restored-idx ref])
+                                                  [new-idx last-ref])
+
                          batch-time (- (System/nanoTime) batch-start)
                          new-total (+ total-docs (count batch))]
-                     (recur (rest batches) new-idx new-total (inc batch-num)))
+                     (recur (rest batches) saved-idx new-total (inc batch-num) saved-ref))
                    ;; No more batches - final save
                    (do
                      (println (format "\nFinal save to disk..."))
-                     (let [ref (neb/store idx storage)]
+                     (let [final-start (System/nanoTime)
+                           ref (neb/store idx storage)
+                           final-time (- (System/nanoTime) final-start)]
+                       (println (format "  Final save: %s" (format-duration final-time)))
                        {:index idx
                         :storage storage
                         :ref ref
