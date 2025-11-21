@@ -81,17 +81,18 @@
                   (pr-str [(.-pos entry) (.-id entry) (.-text entry)])
                   (pr-str [(.-pos entry) (.-id entry)]))))
 
-     (deftype InvertedEntry [word doc-id]
+     (deftype InvertedEntry [^long word-hash word doc-id]
        Object
        (equals [this other]
          (and (instance? InvertedEntry other)
               (let [^InvertedEntry o other]
-                (and (= word (.-word o))
+                (and (= word-hash (.-word-hash o))
+                     (= word (.-word o))
                      (= doc-id (.-doc-id o))))))
 
        (hashCode [this]
          (unchecked-int
-          (+ (.hashCode ^Object word)
+          (+ (unchecked-int word-hash)
              (* 31 (.hashCode ^Object doc-id)))))
 
        (toString [this]
@@ -100,45 +101,61 @@
        Comparable
        (compareTo [this other]
          (let [^InvertedEntry o other
-               word-cmp (compare word (.-word o))]
-           (if (zero? word-cmp)
-             (compare doc-id (.-doc-id o))
-             word-cmp)))
+               ;; Compare by hash first (fast long comparison)
+               hash-cmp (Long/compare word-hash (.-word-hash o))]
+           (if (zero? hash-cmp)
+             ;; Hash collision: compare by actual word, then doc-id
+             (let [word-cmp (compare word (.-word o))]
+               (if (zero? word-cmp)
+                 (compare doc-id (.-doc-id o))
+                 word-cmp))
+             hash-cmp)))
 
        clojure.lang.ILookup
        (valAt [this k]
          (case k
-           0 word
+           0 word-hash  ;; B-tree sees long hash as key!
            1 doc-id
+           2 word       ;; Original word at index 2
            nil))
        (valAt [this k not-found]
          (case k
-           0 word
+           0 word-hash
            1 doc-id
+           2 word
            not-found))
 
        clojure.lang.Indexed
        (nth [this i]
          (case i
-           0 word
+           0 word-hash  ;; B-tree sees long hash as key!
            1 doc-id
+           2 word       ;; Original word at index 2
            (throw (IndexOutOfBoundsException.))))
        (nth [this i not-found]
          (case i
-           0 word
+           0 word-hash
            1 doc-id
+           2 word
            not-found))
 
        clojure.lang.Counted
-       (count [this] 2)
+       (count [this] 3)
 
        clojure.lang.Seqable
        (seq [this]
-         (list word doc-id)))
+         (list word-hash word doc-id)))
 
      ;; Custom print method for EDN serialization (MemoryStorage compatibility)
      (defmethod print-method InvertedEntry [entry ^java.io.Writer w]
-       (.write w (pr-str [(.-word entry) (.-doc-id entry)]))))
+       (.write w (pr-str [(.-word entry) (.-doc-id entry)])))
+
+     ;; Factory function that computes word hash
+     (defn ->InvertedEntry [word doc-id]
+       "Create InvertedEntry with computed word hash for O(1) B-tree operations.
+        Hash enables long-key optimization while preserving string for display."
+       (let [word-hash (unchecked-long (.hashCode ^String word))]
+         (InvertedEntry. word-hash word doc-id))))
 
    :cljs
    (do

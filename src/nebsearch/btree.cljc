@@ -398,13 +398,14 @@
                                               ;; Array slicing (2-3x faster than take/drop)
                                               chunk-arr (Arrays/copyOfRange sorted-arr offset end)
                                               chunk-vec (vec chunk-arr)
-                                              ;; Cache first/last - extract keys via protocol (works for both entry types)
+                                              ;; Cache first/last - extract LONG keys via protocol
                                               ;; DocumentEntry: first returns pos (long)
-                                              ;; InvertedEntry: first returns word (string)
+                                              ;; InvertedEntry: first returns word-hash (long)
+                                              ;; Both produce longs - FULL SPEED with no type checking!
                                               first-entry (aget chunk-arr 0)
                                               last-entry (aget chunk-arr (int (dec (alength chunk-arr))))
-                                              first-key (first first-entry)  ;; Protocol-based key extraction
-                                              last-key (first last-entry)    ;; Works for both DocumentEntry and InvertedEntry
+                                              first-key (first first-entry)  ;; Always returns long!
+                                              last-key (first last-entry)    ;; Always returns long!
                                               leaf (leaf-node chunk-vec nil)]
                                           (recur end
                                                  (conj! leaves {:node leaf
