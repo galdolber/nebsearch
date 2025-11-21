@@ -539,9 +539,9 @@
            len #?(:clj (.length encoded-w) :cljs (.-length encoded-w))
            ;; Calculate next position: use index length if available, otherwise compute from pos-boundaries
            pos (let [idx-str (:index current-flex)]
-                 (if (and idx-str (pos? #?(:clj (.length idx-str) :cljs (.-length idx-str))))
+                 (if (and idx-str (pos? #?(:clj (.length ^String idx-str) :cljs (.-length idx-str))))
                    ;; Index string available, use its length
-                   #?(:clj (.length idx-str) :cljs (.-length idx-str))
+                   #?(:clj (.length ^String idx-str) :cljs (.-length idx-str))
                    ;; Index string empty (restored from disk), calculate from pos-boundaries
                    (if-let [last-boundary (last (:pos-boundaries current-flex))]
                      (let [[last-pos _ last-len] last-boundary]
