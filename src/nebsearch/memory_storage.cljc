@@ -16,16 +16,20 @@
   (store [this node]
     "Store a node in memory and return a unique address"
     (let [address (swap! *counter inc)
-          ;; Store node directly in memory (no serialization)
-          ;; Remove non-persistent fields: offset, cached, storage, root-offset
-          clean-node (dissoc node :offset :cached :storage :root-offset)]
+          ;; Store node directly - deftypes don't need dissoc, maps do
+          clean-node (if (map? node)
+                      (dissoc node :offset :cached :storage :root-offset)
+                      node)] ; deftypes are already clean
       (swap! *storage assoc address clean-node)
       address))
 
   (restore [this address]
     "Restore a node from memory using its address"
     (if-let [node (get @*storage address)]
-      (assoc node :offset address)
+      ;; Deftype nodes store offset in metadata, maps use assoc
+      (if (map? node)
+        (assoc node :offset address)
+        (with-meta node (assoc (meta node) :offset address)))
       (throw (ex-info "Node not found" {:address address}))))
 
   storage/IStorageRoot
