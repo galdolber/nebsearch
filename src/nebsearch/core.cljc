@@ -497,27 +497,34 @@
         ;; Bulk insert all entries into B-tree at once
         (let [new-index (str index (string/join join-char r) join-char)
               updated-pos-boundaries (into pos-boundaries new-boundaries)
-              ;; IMPORTANT: bt-bulk-insert builds NEW tree from scratch!
-              ;; Must merge existing + new entries
-              existing-entries (bt/bt-seq data)
-              all-data-entries (into existing-entries btree-entries)
-              new-data (if (seq all-data-entries)
-                        (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-data-entries)
-                        data)
+              ;; Hybrid strategy: bulk insert for empty tree, incremental for existing tree
+              new-data (if (nil? (:root-offset data))
+                        ;; Empty tree: use bt-bulk-insert (fast initial load with sorting)
+                        (if (seq btree-entries)
+                          (bt/bt-bulk-insert (bt/->DurableBTree storage nil) btree-entries)
+                          data)
+                        ;; Existing tree: use incremental inserts (avoid O(n) extraction)
+                        ;; Trade-off: O(k log n) inserts vs O(n) extraction + O((n+k) log(n+k)) sort
+                        ;; This is faster when k << n (small batch, large existing tree)
+                        (reduce (fn [tree entry]
+                                 (bt/bt-insert tree entry))
+                               data
+                               btree-entries))
               ;; Update inverted index
               inverted (:inverted (meta flex))
               new-inverted (cond
-                            ;; Pre-computed B-tree (disk storage) - bulk insert (with sorting)
+                            ;; Pre-computed B-tree (disk storage) - hybrid strategy
                             (and precompute? (seq inverted-entries))
                             #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     ;; MUST use bt-bulk-insert! Incremental is 10x slower (millions of disk writes)
-                                     ;; Sorting is necessary and actually fast with hash-based keys
-                                     ;; Must merge existing + new inverted entries
-                                     (let [existing-inv-entries (bt/bt-seq inverted)
-                                           all-inv-entries (into existing-inv-entries inverted-entries)]
-                                       (if (seq all-inv-entries)
-                                         (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-inv-entries)
-                                         inverted))
+                                     (if (nil? (:root-offset inverted))
+                                       ;; Empty tree: use bt-bulk-insert (fast initial load)
+                                       (bt/bt-bulk-insert (bt/->DurableBTree storage nil) inverted-entries)
+                                       ;; Existing tree: use incremental inserts (avoid extracting millions of entries)
+                                       ;; Trade-off: slower per-insert, but no O(n) extraction + merge
+                                       (reduce (fn [inv-tree entry]
+                                                (bt/bt-insert inv-tree entry))
+                                              inverted
+                                              inverted-entries))
                                      inverted)
                                :cljs inverted)
 
