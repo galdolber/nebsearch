@@ -99,17 +99,24 @@
                                             batch-num total-docs)))
 
                          ;; Add batch to index
+                         add-start (System/nanoTime)
                          new-idx (neb/search-add idx batch)
+                         add-time (- (System/nanoTime) add-start)
 
                          ;; Save to disk every 10 batches (now efficient - O(1) fast path)
                          [saved-idx saved-ref] (if (zero? (mod batch-num 10))
                                                   (let [save-start (System/nanoTime)
                                                         ref (neb/store new-idx storage)
                                                         save-time (- (System/nanoTime) save-start)
-                                                        ;; Restore to get disk-backed version for next iteration
-                                                        restored-idx (neb/restore storage ref)]
-                                                    (println (format "  Saved to disk (%s)"
-                                                                   (format-duration save-time)))
+
+                                                        restore-start (System/nanoTime)
+                                                        restored-idx (neb/restore storage ref)
+                                                        restore-time (- (System/nanoTime) restore-start)]
+                                                    (println (format "  Times: add=%s, save=%s, restore=%s, total=%s"
+                                                                   (format-duration add-time)
+                                                                   (format-duration save-time)
+                                                                   (format-duration restore-time)
+                                                                   (format-duration (- (System/nanoTime) batch-start))))
                                                     [restored-idx ref])
                                                   [new-idx last-ref])
 
