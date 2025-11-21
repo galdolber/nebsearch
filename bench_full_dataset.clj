@@ -237,7 +237,7 @@
   (try
     (let [dataset-file "dataset.txt"
           index-file "/tmp/full-dataset-bench.dat"
-          batch-size 5000  ;; Process 5000 docs at a time
+          batch-size 50000  ;; INCREASED: Larger batches = better bulk insert performance
 
           _ (when-not (.exists (io/file dataset-file))
               (println "ERROR: dataset.txt not found!")
