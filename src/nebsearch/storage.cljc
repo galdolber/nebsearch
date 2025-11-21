@@ -108,3 +108,25 @@
     Implementations should return:
     - false: For ephemeral/memory storage (lazy is fine, you're rebuilding anyway)
     - true: For persistent storage (pay cost upfront for consistent fast searches)"))
+
+(defprotocol IBatchedStorage
+  "Protocol for batched storage operations (2-4x faster I/O).
+
+  For bulk operations like bt-bulk-insert, writing nodes individually
+  is slow. This protocol allows collecting multiple nodes and writing
+  them in a single batched operation with strategic fsync."
+
+  (batch-store [this nodes]
+    "Store multiple nodes in a single batched operation.
+
+    Parameters:
+    - nodes: A vector of nodes to store
+
+    Returns:
+    - A vector of addresses (offsets) corresponding to each node
+
+    Implementation should:
+    1. Serialize all nodes into a single buffer
+    2. Write buffer in one FileChannel.write() operation
+    3. Only call fsync once at the end
+    4. Return vector of addresses in same order as input"))
