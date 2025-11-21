@@ -1,6 +1,5 @@
 {:paths ["src"]
- :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        org.iq80.snappy/snappy {:mvn/version "0.4"}}
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}}
  :aliases
  {:test {:extra-paths ["test"]}
   :run-tests

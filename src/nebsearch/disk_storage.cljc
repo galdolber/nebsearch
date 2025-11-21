@@ -4,7 +4,6 @@
   Features:
   - RandomAccessFile for efficient random access
   - Custom binary serialization (hand-optimized for B-tree nodes)
-  - Snappy compression for reduced disk usage
   - CRC32 checksums for data integrity
   - Node caching for performance
   - Atomic updates via write-ahead approach
@@ -17,11 +16,12 @@
                     DataOutputStream DataInputStream]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32]
-                   [org.iq80.snappy Snappy]
                    [nebsearch.entries DocumentEntry InvertedEntry])))
 
 #?(:clj
    (do
+     (set! *warn-on-reflection* true)
+
      ;; File format constants
      (def ^:const header-size 256)
      (def ^:const magic-number "NEBSRCH\0")
@@ -134,14 +134,12 @@
                  (.writeLong dos next-leaf))
                (.writeBoolean dos false)))
 
-         ;; Compress with Snappy
-         (let [uncompressed (.toByteArray baos)]
-           (Snappy/compress uncompressed))))
+         ;; Return serialized bytes
+         (.toByteArray baos)))
 
      (defn- deserialize-node [^bytes data offset]
        "Custom binary deserialization optimized for B-tree nodes"
-       (let [uncompressed (Snappy/uncompress data 0 (alength data))
-             bais (ByteArrayInputStream. uncompressed)
+       (let [bais (ByteArrayInputStream. data)
              dis (DataInputStream. bais)
              node-type (.readByte dis)]
 
@@ -228,12 +226,12 @@
          "Store a node and return its file offset as address"
          (let [offset (.length raf)]
            (.seek raf offset)
-           (let [node-bytes (serialize-node node)
+           (let [^bytes node-bytes (serialize-node node)
                  checksum (crc32 node-bytes)
                  length (alength node-bytes)]
              ;; Write: length (4) + data (n) + checksum (4)
              (.writeInt raf length)
-             (.write raf node-bytes)
+             (.write raf ^bytes node-bytes)
              (.writeInt raf (unchecked-int checksum))
              ;; Cache the node
              (swap! node-cache assoc offset (assoc node :offset offset))
