@@ -497,23 +497,26 @@
         ;; Bulk insert all entries into B-tree at once
         (let [new-index (str index (string/join join-char r) join-char)
               updated-pos-boundaries (into pos-boundaries new-boundaries)
-              ;; Sort new entries before merging
-              sorted-btree-entries (sort btree-entries)
-              sorted-inverted-entries (sort inverted-entries)
-              ;; Use bt-merge: smart merge that preserves sort order
-              ;; Existing entries from tree are already sorted, new entries now sorted
-              ;; TimSort in bt-merge detects merged data is nearly sorted, runs in O(n)
-              new-data (bt/bt-merge data sorted-btree-entries)
+              ;; Use bulk insert: extract existing + merge + rebuild
+              ;; Progressive slowdown as tree grows, but still faster than incremental disk writes
+              existing-entries (bt/bt-seq data)
+              all-data-entries (into existing-entries btree-entries)
+              new-data (if (seq all-data-entries)
+                        (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-data-entries)
+                        data)
               ;; Update inverted index
               inverted (:inverted (meta flex))
               new-inverted (cond
-                            ;; Pre-computed B-tree (disk storage) - use bt-merge
-                            (and precompute? (seq sorted-inverted-entries))
+                            ;; Pre-computed B-tree (disk storage) - bulk insert
+                            (and precompute? (seq inverted-entries))
                             #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     ;; bt-merge: smart merge preserving sort order
-                                     ;; Existing entries already sorted in tree, new entries sorted
-                                     ;; TimSort optimization makes this much faster than full re-sort
-                                     (bt/bt-merge inverted sorted-inverted-entries)
+                                     ;; Use bulk insert: extract existing + merge + rebuild
+                                     ;; Progressive slowdown as tree grows, but still faster than incremental
+                                     (let [existing-inv-entries (bt/bt-seq inverted)
+                                           all-inv-entries (into existing-inv-entries inverted-entries)]
+                                       (if (seq all-inv-entries)
+                                         (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-inv-entries)
+                                         inverted))
                                      inverted)
                                :cljs inverted)
 
