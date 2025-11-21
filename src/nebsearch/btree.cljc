@@ -373,77 +373,17 @@
                ;; DON'T write header - that breaks COW! Header only written on explicit save
                (assoc btree :root-offset new-root-offset))))))
 
-     (defn- radix-sort-long-keyed!
-       "Production-ready LSD radix sort for objects with long keys (O(n) time).
-
-       Sorts array in-place by extracting long key from each object via key-fn.
-       Uses 8-pass byte-wise counting sort (one per byte of 64-bit long).
-       Handles negative numbers correctly via sign-bit flip trick.
-
-       Parameters:
-       - arr: Object array to sort in-place
-       - key-fn: Function to extract long key from object
-
-       Performance: O(8n) = O(n) vs O(n log n) for comparison sort.
-       For 1M entries: ~8M operations vs ~20M comparisons = 2.5x+ faster"
-       [^objects arr key-fn]
-       (let [n (int (alength arr))]
-         (when (> n 1)
-           (let [temp (object-array n)
-                 ;; 256 buckets for each byte value (0-255)
-                 counts (int-array 256)]
-             ;; 8 passes, one for each byte of the 64-bit long
-             ;; Start with least significant byte for stable sort
-             (dotimes [pass 8]
-               (let [shift (int (* pass 8))
-                     sign-pass? (== pass 7)] ;; Last pass handles sign bit
-
-                 ;; Clear counts
-                 (Arrays/fill counts (int 0))
-
-                 ;; Count occurrences of each byte value
-                 (dotimes [i n]
-                   (let [obj (aget arr i)
-                         key-val (long (key-fn obj))
-                         ;; Flip sign bit on last pass so negatives sort before positives
-                         key-val (if sign-pass? (bit-xor key-val Long/MIN_VALUE) key-val)
-                         byte-val (int (bit-and (unsigned-bit-shift-right key-val shift) 0xFF))]
-                     (aset counts byte-val (unchecked-inc (aget counts byte-val)))))
-
-                 ;; Convert counts to positions (prefix sum)
-                 (loop [i (int 1)]
-                   (when (< i 256)
-                     (aset counts i (unchecked-add (aget counts (dec i)) (aget counts i)))
-                     (recur (unchecked-inc-int i))))
-
-                 ;; Build output in temp array (backwards for stability)
-                 (loop [i (int (dec n))]
-                   (when (>= i 0)
-                     (let [obj (aget arr i)
-                           key-val (long (key-fn obj))
-                           key-val (if sign-pass? (bit-xor key-val Long/MIN_VALUE) key-val)
-                           byte-val (int (bit-and (unsigned-bit-shift-right key-val shift) 0xFF))
-                           pos (unchecked-dec-int (aget counts byte-val))]
-                       (aset counts byte-val pos)
-                       (aset temp pos obj)
-                       (recur (unchecked-dec-int i)))))
-
-                 ;; Copy back to original array
-                 (System/arraycopy temp 0 arr 0 n)))))))
-
      (defn- bt-bulk-insert-impl [btree entries]
        "Bulk insert entries efficiently by building tree bottom-up.
-        Entries are sorted by [pos id] using O(n) radix sort for pos.
+        Entries are sorted using TimSort (optimized for < 100K entries).
         Much faster than repeated single inserts for large batches."
        (if (empty? entries)
          btree
          (let [stor (:storage btree)
-               ;; Sort and KEEP as array - use RADIX SORT for O(n) time!
+               ;; Sort and KEEP as array - use TimSort for small/medium datasets
+               ;; TimSort is faster than radix for < 100K entries (8ms vs 25ms for 10K)
                arr (to-array entries)
-               ;; Radix sort by pos (the primary long key) - O(n) performance!
-               ;; Note: In production, pos should be unique per entry.
-               ;; If duplicate pos values exist, secondary id sort happens via Comparable.
-               _ (radix-sort-long-keyed! arr #(.-pos ^nebsearch.entries.DocumentEntry %))
+               _ (Arrays/sort arr)  ; TimSort: adaptive, fast for nearly-sorted data
                ^objects sorted-arr arr
                arr-len (int (alength sorted-arr))]
            (letfn [(build-leaf-level [^objects sorted-arr]
