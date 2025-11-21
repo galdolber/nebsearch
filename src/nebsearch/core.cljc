@@ -5,7 +5,8 @@
             [nebsearch.btree :as bt]
             [nebsearch.storage :as storage]
             [nebsearch.entries :as entries]
-            #?(:clj [nebsearch.memory-storage :as mem-storage])))
+            #?(:clj [nebsearch.memory-storage :as mem-storage]))
+  #?(:clj (:import [nebsearch.entries DocumentEntry InvertedEntry])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -263,7 +264,10 @@
                                       #?(:clj (instance? clojure.lang.Atom inverted)
                                          :cljs false)
                                       ;; Build from scratch by scanning main data B-tree
-                                      (vec (for [[_ doc-id text] entries
+                                      (vec (for [entry entries
+                                                 :let [^DocumentEntry e entry
+                                                       doc-id (.-id e)
+                                                       text (.-text e)]
                                                  word (default-splitter text)]
                                              (entries/->InvertedEntry word doc-id)))
 
@@ -366,11 +370,11 @@
            hi (dec (count pos-boundaries))]
       (when (<= lo hi)
         (let [mid (quot (+ lo hi) 2)
-              entry (nth pos-boundaries mid)
-              start-pos (entries/doc-entry-pos entry)
-              doc-id (entries/doc-entry-id entry)
+              ^DocumentEntry entry (nth pos-boundaries mid)
+              start-pos (.-pos entry)
+              doc-id (.-id entry)
               ;; For boundaries, text field contains the length (integer), not actual text
-              text-len (entries/doc-entry-text entry)
+              text-len (.-text entry)
               end-pos (+ start-pos text-len)]
           (cond
             (and (>= pos start-pos) (< pos end-pos))
@@ -424,7 +428,10 @@
                                               [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
                                             old-cache)))
               updated-ids (apply dissoc ids id-list)
-              updated-pos-boundaries (filterv (fn [entry] (not (removed-ids-set (entries/doc-entry-id entry)))) pos-boundaries)
+              updated-pos-boundaries (filterv (fn [entry]
+                                                (let [^DocumentEntry e entry]
+                                                  (not (removed-ids-set (.-id e)))))
+                                              pos-boundaries)
               ;; Update inverted index if pre-computing
               inverted (:inverted (meta flex))
               new-inverted (if precompute?
@@ -432,7 +439,8 @@
                                      ;; For B-tree inverted: remove all entries for removed docs
                                      ;; We need to scan and delete entries matching removed doc IDs
                                      (reduce (fn [inv-tree entry]
-                                              (let [doc-id (entries/inv-entry-doc-id entry)]
+                                              (let [^InvertedEntry e entry
+                                                    doc-id (.-doc-id e)]
                                                 (if (removed-ids-set doc-id)
                                                   (bt/bt-delete inv-tree entry)
                                                   inv-tree)))
@@ -514,8 +522,9 @@
                             #?(:clj
                                ;; Create NEW atom for COW semantics (don't mutate shared atom!)
                                (atom (reduce (fn [m entry]
-                                              (let [word (entries/inv-entry-word entry)
-                                                    doc-id (entries/inv-entry-doc-id entry)]
+                                              (let [^InvertedEntry e entry
+                                                    word (.-word e)
+                                                    doc-id (.-doc-id e)]
                                                 ;; Only update if word is already cached
                                                 (if (contains? m word)
                                                   (update m word conj doc-id)
@@ -552,9 +561,10 @@
                    #?(:clj (.length ^String idx-str) :cljs (.-length idx-str))
                    ;; Index string empty (restored from disk), calculate from pos-boundaries
                    (if-let [last-boundary (last (:pos-boundaries current-flex))]
-                     (let [last-pos (entries/doc-entry-pos last-boundary)
+                     (let [^DocumentEntry e last-boundary
+                           last-pos (.-pos e)
                            ;; For boundaries, text field contains the length (integer), not actual text
-                           last-len (entries/doc-entry-text last-boundary)]
+                           last-len (.-text e)]
                        (+ last-pos last-len 1))  ; position after last entry + join char
                      0)))  ; Empty index
            entry (entries/->DocumentEntry pos id encoded-w)
@@ -653,8 +663,9 @@
        ;; Scan B-tree for all entries where word is substring of token
        ;; Filter for substring match
        (set (keep (fn [entry]
-                   (let [w (entries/inv-entry-word entry)
-                         doc-id (entries/inv-entry-doc-id entry)]
+                   (let [^InvertedEntry e entry
+                         w (.-word e)
+                         doc-id (.-doc-id e)]
                      (when (string/includes? w word) doc-id)))
                  (bt/bt-seq inverted)))
        :cljs #{})
@@ -669,7 +680,9 @@
          ;; Not cached yet - build it by scanning B-tree
          (let [doc-ids (set (keep (fn [entry]
                                     ;; Check if any token in the text contains word as substring
-                                    (let [[_ doc-id text] entry]
+                                    (let [^DocumentEntry e entry
+                                          doc-id (.-id e)
+                                          text (.-text e)]
                                       (when (some #(string/includes? % word) (default-splitter text))
                                         doc-id)))
                                   (bt/bt-seq data)))]
@@ -730,12 +743,17 @@
                                 (if (seq doc-ids)
                                   ;; Narrow search range based on matches
                                   (let [matching-bounds (filter (fn [entry]
-                                                                 (contains? doc-id-set (entries/doc-entry-id entry)))
+                                                                 (let [^DocumentEntry e entry]
+                                                                   (contains? doc-id-set (.-id e))))
                                                                pos-boundaries)
-                                        new-min (long (apply min (map entries/doc-entry-pos matching-bounds)))
+                                        new-min (long (apply min (map (fn [entry]
+                                                                       (let [^DocumentEntry e entry]
+                                                                         (.-pos e)))
+                                                                     matching-bounds)))
                                         new-max (long (reduce (fn [mx entry]
-                                                               (let [pos (entries/doc-entry-pos entry)
-                                                                     len (count (entries/doc-entry-text entry))]
+                                                               (let [^DocumentEntry e entry
+                                                                     pos (.-pos e)
+                                                                     len (count (.-text e))]
                                                                  (max mx (+ pos len))))
                                                              0
                                                              matching-bounds))]
