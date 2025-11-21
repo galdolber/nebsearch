@@ -39,11 +39,15 @@ echo ""
 echo "Running benchmark (output will be saved to benchmark_results.txt)..."
 echo ""
 
-# Run with 4GB heap (load as script file, not namespace)
-java -Xmx4g -server \
-  -cp clojure-1.11.1.jar:spec.alpha-0.3.218.jar:core.specs.alpha-0.2.62.jar:persistent-sorted-set-0.3.0.jar:src \
-  clojure.main \
-  bench_real_world.clj \
+# Check if clojure CLI is available
+if ! command -v clojure &> /dev/null; then
+  echo "Error: 'clojure' command not found."
+  echo "Please install Clojure CLI tools: https://clojure.org/guides/install_clojure"
+  exit 1
+fi
+
+# Run with 4GB heap using deps.edn
+clojure -J-Xmx4g -J-server -M bench_real_world.clj \
   | tee benchmark_results.txt
 
 echo ""
