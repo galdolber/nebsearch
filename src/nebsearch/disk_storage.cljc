@@ -3,6 +3,7 @@
 
   Features:
   - RandomAccessFile for efficient random access
+  - Nippy binary serialization (10-100x faster than EDN)
   - Snappy compression for reduced disk usage
   - CRC32 checksums for data integrity
   - Node caching for performance
@@ -10,7 +11,8 @@
   - Explicit save semantics (no automatic flush)"
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
-            [nebsearch.storage :as storage])
+            [nebsearch.storage :as storage]
+            #?(:clj [taoensso.nippy :as nippy]))
   #?(:clj (:import [java.io RandomAccessFile File]
                    [java.nio ByteBuffer]
                    [java.util.zip CRC32]
@@ -30,17 +32,15 @@
          (.getValue crc)))
 
      (defn- serialize-node [node]
-       "Serialize node to EDN bytes with Snappy compression"
-       (let [edn-str (pr-str (dissoc node :offset :cached))
-             bytes (.getBytes edn-str "UTF-8")
-             compressed (Snappy/compress bytes)]
-         compressed))
+       "Serialize node using Nippy (fast binary) with Snappy compression"
+       (let [node-data (dissoc node :offset :cached)
+             ;; Nippy with :snappy compression built-in (faster than double compression)
+             bytes (nippy/freeze node-data {:compressor nippy/snappy-compressor})]
+         bytes))
 
      (defn- deserialize-node [^bytes data offset]
-       "Deserialize node from EDN bytes with Snappy decompression"
-       (let [decompressed (Snappy/uncompress data 0 (alength data))
-             edn-str (String. decompressed "UTF-8")
-             node (edn/read-string edn-str)]
+       "Deserialize node from Nippy binary format"
+       (let [node (nippy/thaw data)]
          (assoc node :offset offset)))
 
      ;; File header management
