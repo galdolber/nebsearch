@@ -23,7 +23,7 @@
 (def join-char \ñ) ;; normalized to 'n' by encoder, ensures it never appears in indexed text
 
 ;; Performance tuning parameters
-(def ^:dynamic *cache-size* 1000)  ;; Max cache entries (LRU)
+(def ^:dynamic *cache-size* 2000)  ;; Max cache entries (LRU) - increased for better performance
 (def ^:dynamic *auto-gc-threshold* 0.3)  ;; Auto-GC when >30% fragmented
 (def ^:dynamic *batch-threshold* 100)  ;; Use StringBuilder for batches >100
 (def ^:dynamic *bulk-insert-threshold* 50)  ;; Use bt-bulk-insert for >=50 docs, bt-insert for <50
@@ -664,14 +664,17 @@
     #?(:clj (instance? nebsearch.btree.DurableBTree inverted)
        :cljs false)
     #?(:clj
-       ;; Scan B-tree for all entries where word is substring of token
-       ;; Filter for substring match
-       (set (keep (fn [entry]
-                   (let [^InvertedEntry e entry
-                         w (.-word e)
-                         doc-id (.-doc-id e)]
-                     (when (string/includes? w word) doc-id)))
-                 (bt/bt-seq inverted)))
+       ;; OPTIMIZED: Use transients for better performance during collection
+       (persistent!
+        (reduce (fn [acc entry]
+                 (let [^InvertedEntry e entry
+                       w (.-word e)
+                       doc-id (.-doc-id e)]
+                   (if (string/includes? w word)
+                     (conj! acc doc-id)
+                     acc)))
+               (transient #{})
+               (bt/bt-seq inverted)))
        :cljs #{})
 
     ;; Lazy atom/map inverted index (memory storage)
@@ -682,14 +685,17 @@
        (if-let [cached (get @inverted word)]
          cached
          ;; Not cached yet - build it by scanning B-tree
-         (let [doc-ids (set (keep (fn [entry]
-                                    ;; Check if any token in the text contains word as substring
-                                    (let [^DocumentEntry e entry
-                                          doc-id (.-id e)
-                                          text (.-text e)]
-                                      (when (some #(string/includes? % word) (default-splitter text))
-                                        doc-id)))
-                                  (bt/bt-seq data)))]
+         (let [doc-ids (persistent!
+                        (reduce (fn [acc entry]
+                                 ;; Check if any token in the text contains word as substring
+                                 (let [^DocumentEntry e entry
+                                       doc-id (.-id e)
+                                       text (.-text e)]
+                                   (if (some #(string/includes? % word) (default-splitter text))
+                                     (conj! acc doc-id)
+                                     acc)))
+                               (transient #{})
+                               (bt/bt-seq data)))]
            ;; Cache the exact word for future lookups
            (swap! inverted assoc word doc-ids)
            doc-ids))
