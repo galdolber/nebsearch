@@ -1,4 +1,6 @@
 (require '[nebsearch.core :as neb])
+(require '[nebsearch.disk-storage :as disk])
+(require '[nebsearch.storage :as storage])
 
 (defn format-duration [nanos]
   (cond
@@ -14,12 +16,11 @@
     [result (- end start)]))
 
 (defn generate-docs [n]
-  (into {} (for [i (range n)]
-             [(str "doc" i) (str "content " i " some additional text")])))
+  (mapv (fn [i] [(str "doc" i) (str "content " i " some additional text") (str "Title " i)])
+        (range n)))
 
 (defn cleanup-files [path]
-  (doseq [suffix ["" ".meta" ".versions" ".gc-temp" ".gc-temp.meta" ".gc-temp.versions"]]
-    (.delete (java.io.File. (str path suffix)))))
+  (.delete (java.io.File. path)))
 
 (println "\n════════════════════════════════════════")
 (println "  NebSearch Write Performance Profiling")
@@ -34,33 +35,44 @@
     (cleanup-files path)
 
     ;; In-Memory baseline
-    (let [[idx time] (measure-time #(neb/search-add (neb/init {}) docs))]
+    (let [[idx time] (measure-time #(neb/search-add (neb/init) docs))]
       (println (format "In-Memory:  %12s  (%s per doc)"
                        (format-duration time)
                        (format-duration (quot time n)))))
 
-    ;; Durable with timing breakdown
+    ;; Disk storage with timing breakdown
     (let [start-total (System/nanoTime)
-          idx (neb/init {:durable? true :index-path path})
+          store (disk/open-disk-storage path 128 true)
           after-init (System/nanoTime)
 
           ;; Time the add operation
-          idx-with-docs (neb/search-add idx docs)
+          idx (neb/search-add (neb/init) docs)
           after-add (System/nanoTime)
 
-          total-time (- after-add start-total)
-          init-time (- after-init start-total)
-          add-time (- after-add after-init)]
+          ;; Time the store operation
+          ref (neb/store idx store)
+          after-store (System/nanoTime)
 
-      (println (format "Durable:    %12s  (%s per doc)"
-                       (format-duration add-time)
-                       (format-duration (quot add-time n))))
+          ;; Save to disk
+          _ (storage/save store)
+          after-save (System/nanoTime)
+
+          total-time (- after-save start-total)
+          init-time (- after-init start-total)
+          add-time (- after-add after-init)
+          store-time (- after-store after-add)
+          save-time (- after-save after-store)]
+
+      (println (format "Disk:       %12s  (%s per doc)"
+                       (format-duration (+ store-time save-time))
+                       (format-duration (quot (+ store-time save-time) n))))
       (println (format "  Init:     %12s" (format-duration init-time)))
       (println (format "  Add:      %12s" (format-duration add-time)))
-      (println (format "  Slowdown: %.1fx vs in-memory"
-                       (/ (double add-time) (/ (double total-time) 1.0))))
+      (println (format "  Store:    %12s" (format-duration store-time)))
+      (println (format "  Save:     %12s" (format-duration save-time)))
+      (println (format "  Total:    %12s" (format-duration total-time)))
 
-      (neb/close idx-with-docs)
+      (storage/close store)
       (cleanup-files path))))
 
 (println "\n════════════════════════════════════════")

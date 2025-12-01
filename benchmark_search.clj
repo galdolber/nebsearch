@@ -24,7 +24,7 @@
 ;; Test with 1000 docs
 (let [n 1000
       docs (generate-docs n)
-      idx (neb/search-add (neb/init {}) docs)
+      idx (neb/search-add (neb/init) docs)
 
       ;; Generate different types of queries
       single-queries (take 10 (repeatedly #(str "content " (rand-int n))))
@@ -69,7 +69,7 @@
   (println "\n6. How search time scales with document count:")
   (doseq [size [100 500 1000 2000]]
     (let [test-docs (generate-docs size)
-          test-idx (neb/search-add (neb/init {}) test-docs)
+          test-idx (neb/search-add (neb/init) test-docs)
           [_ time] (measure-time #(neb/search test-idx "content 0"))]
       (println (format "   %4d docs: %s" size (format-duration time))))))
 
