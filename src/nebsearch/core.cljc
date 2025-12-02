@@ -137,6 +137,7 @@
        ^{:cache (atom {})
          :storage storage
          :inverted inverted
+         :word-cache (atom nil)  ;; Lazy cache of unique words for substring matching
          :metrics (when *enable-metrics* (create-metrics-atom))}
        {:data btree
         :index ""
@@ -335,7 +336,8 @@
        ^{:cache (atom {})
          :lazy? true
          :storage storage
-         :inverted inverted}
+         :inverted inverted
+         :word-cache (atom nil)}  ;; Lazy word cache
        {:data btree
         :index index
         :ids ids
@@ -465,7 +467,9 @@
                                 :data data
                                 :index index  ;; Index unchanged (text in B-tree)
                                 :pos-boundaries updated-pos-boundaries)
-                         (vary-meta merge {:cache new-cache :inverted new-inverted}))]
+                         (vary-meta merge {:cache new-cache
+                                          :inverted new-inverted
+                                          :word-cache (atom nil)}))]  ;; Invalidate word cache
           ;; Auto-GC disabled for durable mode - could break COW file semantics
           result)))))
 
@@ -544,8 +548,10 @@
                      :index new-index
                      :data new-data
                      :pos-boundaries updated-pos-boundaries)
-              ;; Reset LRU cache to force fresh searches, but keep inverted as-is
-              (vary-meta merge {:cache (atom {}) :inverted new-inverted}))))))
+              ;; Reset LRU cache and word cache on bulk add
+              (vary-meta merge {:cache (atom {})
+                               :inverted new-inverted
+                               :word-cache (atom nil)}))))))
 
 (defn- search-add-incremental
   "Incremental insert approach: uses bt-insert for each entry.
@@ -613,7 +619,9 @@
                   :index (str (:index current-flex) encoded-w join-char)
                   :ids (assoc (:ids current-flex) id pos)
                   :pos-boundaries (conj (:pos-boundaries current-flex) (entries/->DocumentEntry pos id len)))
-           (vary-meta merge {:cache (atom {}) :inverted new-inverted})))))
+           (vary-meta merge {:cache (atom {})
+                            :inverted new-inverted
+                            :word-cache (atom nil)})))))
    flex
    pairs))
 
@@ -653,28 +661,64 @@
           r)
         r))))
 
+(defn- build-word-cache
+  "Build a set of all unique words from the inverted B-tree.
+   Scans ~100K unique words instead of ~5M inverted entries."
+  [inverted]
+  #?(:clj
+     (into #{}
+           (map (fn [entry]
+                  (let [^InvertedEntry e entry]
+                    (.-word e))))
+           (bt/bt-seq inverted))
+     :cljs #{}))
+
 (defn- find-docs-with-word
   "Find all doc IDs containing the given word using inverted index.
    Supports substring matching: 'tatto' matches 'tattoo'.
-   For pre-computed (disk): Query B-tree directly
+   For pre-computed (disk): Query B-tree directly using hash-based range queries
    For lazy (memory): Build on first access via B-tree iteration"
-  [inverted word data]
+  [inverted word data word-cache-atom]
   (cond
     ;; Pre-computed B-tree inverted index (disk storage)
     #?(:clj (instance? nebsearch.btree.DurableBTree inverted)
        :cljs false)
     #?(:clj
-       ;; OPTIMIZED: Use transients for better performance during collection
-       (persistent!
-        (reduce (fn [acc entry]
-                 (let [^InvertedEntry e entry
-                       w (.-word e)
-                       doc-id (.-doc-id e)]
-                   (if (string/includes? w word)
-                     (conj! acc doc-id)
-                     acc)))
-               (transient #{})
-               (bt/bt-seq inverted)))
+       ;; OPTIMIZED PATH 1: Try exact word match first using word-hash range query
+       ;; This is O(log n + k) instead of O(n) where k = entries for this word
+       (let [word-hash (unchecked-long (.hashCode ^String word))
+             ;; Get all entries with matching word-hash using B-tree range query
+             ;; InvertedEntry is sorted by [word-hash word doc-id], so range query filters by hash
+             hash-matches (bt/bt-range inverted word-hash word-hash)]
+         (if (seq hash-matches)
+           ;; Found entries with matching hash - filter by exact word (handle collisions)
+           (persistent!
+            (reduce (fn [acc entry]
+                     (let [^InvertedEntry e entry
+                           w (.-word e)
+                           doc-id (.-doc-id e)]
+                       (if (= w word)
+                         (conj! acc doc-id)
+                         acc)))
+                   (transient #{})
+                   hash-matches))
+           ;; OPTIMIZED PATH 2: No exact match - use word cache for substring search
+           (let [word-cache (or @word-cache-atom
+                               (let [cache (build-word-cache inverted)]
+                                 (reset! word-cache-atom cache)
+                                 cache))
+                 ;; Find words containing the search term - scans ~100K words, not ~5M entries!
+                 matching-words (filter #(string/includes? % word) word-cache)]
+             ;; For each matching word, get doc-ids using hash-based range query
+             (into #{}
+                   (mapcat (fn [w]
+                            (let [w-hash (unchecked-long (.hashCode ^String w))
+                                  w-matches (bt/bt-range inverted w-hash w-hash)]
+                              (map (fn [entry]
+                                    (let [^InvertedEntry e entry]
+                                      (.-doc-id e)))
+                                  w-matches))))
+                   matching-words))))
        :cljs #{})
 
     ;; Lazy atom/map inverted index (memory storage)
@@ -729,15 +773,16 @@
                                    (update :total-query-time-ms + (- (current-time-millis) start-time))))))
              (if limit (set (take limit cached)) cached))
            (let [inverted (:inverted (meta flex))
+                 word-cache-atom (:word-cache (meta flex))
                  ;; Try inverted index first
                  result (if inverted
                          ;; Use inverted index (pre-computed or lazy)
                          (if (= 1 (count words))
                            ;; Single word: direct lookup
-                           (find-docs-with-word inverted (first words) data)
+                           (find-docs-with-word inverted (first words) data word-cache-atom)
                            ;; Multiple words: intersection
                            (apply sets/intersection
-                                 (map #(find-docs-with-word inverted % data) words)))
+                                 (map #(find-docs-with-word inverted % data word-cache-atom) words)))
                          ;; Fallback to string scanning if no inverted index
                          (apply
                           sets/intersection

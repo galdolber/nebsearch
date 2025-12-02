@@ -41,3 +41,5 @@ profile_search.clj
 search_perf.clj
 search_profile.clj
 dataset.txt
+wikipedia.idx
+wikipedia.idx.ref

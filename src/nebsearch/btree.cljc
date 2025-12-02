@@ -220,8 +220,9 @@
                              (let [child-min (if (zero? i) nil (nth keys (dec i)))
                                    child-max (when (< i (count keys)) (nth keys i))]
                                ;; Visit child if its range [child-min, child-max] overlaps [start, end]
-                               (when (and (or (nil? end) (nil? child-min) (< child-min end))
-                                         (or (nil? start) (nil? child-max) (> child-max start)))
+                               ;; Use <= and >= to include boundary values (critical for exact match queries)
+                               (when (and (or (nil? end) (nil? child-min) (<= child-min end))
+                                         (or (nil? start) (nil? child-max) (>= child-max start)))
                                  (node-range (nth children i)))))
                            (range (count children))))))))]
            (vec (node-range root-off)))))
