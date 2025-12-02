@@ -707,7 +707,7 @@
 (deftest test-dynamic-configuration
   "Test that dynamic configuration parameters can be changed"
   ;; Test changing cache size
-  (is (= 1000 f/*cache-size*)) ;; Default value
+  (is (= 2000 f/*cache-size*)) ;; Default value
   (binding [f/*cache-size* 500]
     (is (= 500 f/*cache-size*)))
 
