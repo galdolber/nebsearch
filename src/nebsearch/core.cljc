@@ -144,7 +144,13 @@
         :ids {}
         :pos-boundaries []})
      :cljs
-     (throw (ex-info "init not supported in ClojureScript" {}))))
+     ;; ClojureScript: simple in-memory implementation with vectors
+     ^{:cache (atom {})
+       :inverted (atom {})}
+     {:data []  ;; Vector of [pos id text] entries
+      :index ""
+      :ids {}
+      :pos-boundaries []}))
 
 ;; All indexes are now durable B-tree based (no more dual-mode)
 
@@ -376,11 +382,15 @@
            hi (dec (count pos-boundaries))]
       (when (<= lo hi)
         (let [mid (quot (+ lo hi) 2)
-              ^DocumentEntry entry (nth pos-boundaries mid)
-              start-pos (.-pos entry)
-              doc-id (.-id entry)
-              ;; For boundaries, text field contains the length (integer), not actual text
-              text-len (.-text entry)
+              entry (nth pos-boundaries mid)
+              ;; CLJ uses DocumentEntry, CLJS uses [pos id len] vectors
+              #?@(:clj [^DocumentEntry e entry
+                        start-pos (.-pos e)
+                        doc-id (.-id e)
+                        text-len (.-text e)]
+                  :cljs [start-pos (nth entry 0)
+                         doc-id (nth entry 1)
+                         text-len (nth entry 2)])
               end-pos (+ start-pos text-len)]
           (cond
             (and (>= pos start-pos) (< pos end-pos))
@@ -422,56 +432,75 @@
         storage (:storage (meta flex))
         precompute? (and storage (storage/precompute-inverted? storage))
         removed-ids-set (set id-list)]
-    ;; Delete from B-tree (text is in B-tree)
-    (loop [[[pos :as pair] & ps] existing
-           data data]
-      (if pair
-        (recur ps (bt/bt-delete data pair))
-        ;; Create new version with updated cache and inverted index
-        (let [old-cache @(:cache (meta flex))
-              ;; Filter cached results to remove deleted document IDs
-              new-cache (atom (into {} (map (fn [[k v]]
-                                              [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
-                                            old-cache)))
-              updated-ids (apply dissoc ids id-list)
-              updated-pos-boundaries (filterv (fn [entry]
-                                                (let [^DocumentEntry e entry]
-                                                  (not (removed-ids-set (.-id e)))))
-                                              pos-boundaries)
-              ;; Update inverted index if pre-computing
-              inverted (:inverted (meta flex))
-              new-inverted (if precompute?
-                            #?(:clj (if (instance? nebsearch.btree.DurableBTree inverted)
-                                     ;; For B-tree inverted: remove all entries for removed docs
-                                     ;; We need to scan and delete entries matching removed doc IDs
-                                     (reduce (fn [inv-tree entry]
-                                              (let [^InvertedEntry e entry
-                                                    doc-id (.-doc-id e)]
-                                                (if (removed-ids-set doc-id)
-                                                  (bt/bt-delete inv-tree entry)
-                                                  inv-tree)))
-                                            inverted
-                                            (bt/bt-seq inverted))
-                                     inverted)
-                               :cljs inverted)
-                            ;; For lazy map: remove doc IDs from sets (create new atom for COW)
-                            #?(:clj (if (instance? clojure.lang.Atom inverted)
-                                     ;; Create NEW atom for COW semantics (don't mutate shared atom!)
-                                     (atom (into {} (map (fn [[word doc-ids]]
-                                                          [word (sets/difference doc-ids removed-ids-set)])
-                                                        @inverted)))
-                                     inverted)
-                               :cljs inverted))
-              result (-> (assoc flex
-                                :ids updated-ids
-                                :data data
-                                :index index  ;; Index unchanged (text in B-tree)
-                                :pos-boundaries updated-pos-boundaries)
-                         (vary-meta merge {:cache new-cache
-                                          :inverted new-inverted
-                                          :word-cache (atom nil)}))]  ;; Invalidate word cache
-          ;; Auto-GC disabled for durable mode - could break COW file semantics
-          result)))))
+    ;; Delete from data structure (B-tree in CLJ, vector in CLJS)
+    #?(:clj
+       (loop [[[pos :as pair] & ps] existing
+              data data]
+         (if pair
+           (recur ps (bt/bt-delete data pair))
+           ;; Create new version with updated cache and inverted index
+           (let [old-cache @(:cache (meta flex))
+                 ;; Filter cached results to remove deleted document IDs
+                 new-cache (atom (into {} (map (fn [[k v]]
+                                                 [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
+                                               old-cache)))
+                 updated-ids (apply dissoc ids id-list)
+                 updated-pos-boundaries (filterv (fn [entry]
+                                                   (let [^DocumentEntry e entry]
+                                                     (not (removed-ids-set (.-id e)))))
+                                                 pos-boundaries)
+                 ;; Update inverted index if pre-computing
+                 inverted (:inverted (meta flex))
+                 new-inverted (if precompute?
+                               (if (instance? nebsearch.btree.DurableBTree inverted)
+                                 ;; For B-tree inverted: remove all entries for removed docs
+                                 ;; We need to scan and delete entries matching removed doc IDs
+                                 (reduce (fn [inv-tree entry]
+                                           (let [^InvertedEntry e entry
+                                                 doc-id (.-doc-id e)]
+                                             (if (removed-ids-set doc-id)
+                                               (bt/bt-delete inv-tree entry)
+                                               inv-tree)))
+                                         inverted
+                                         (bt/bt-seq inverted))
+                                 inverted)
+                               ;; For lazy map: remove doc IDs from sets (create new atom for COW)
+                               (if (instance? clojure.lang.Atom inverted)
+                                 ;; Create NEW atom for COW semantics (don't mutate shared atom!)
+                                 (atom (into {} (map (fn [[word doc-ids]]
+                                                       [word (sets/difference doc-ids removed-ids-set)])
+                                                     @inverted)))
+                                 inverted))
+                 result (-> (assoc flex
+                                   :ids updated-ids
+                                   :data data
+                                   :index index  ;; Index unchanged (text in B-tree)
+                                   :pos-boundaries updated-pos-boundaries)
+                            (vary-meta merge {:cache new-cache
+                                             :inverted new-inverted
+                                             :word-cache (atom nil)}))]  ;; Invalidate word cache
+             ;; Auto-GC disabled for durable mode - could break COW file semantics
+             result)))
+       :cljs
+       ;; CLJS: simple vector-based implementation
+       (let [new-data (filterv (fn [[_ id _]] (not (removed-ids-set id))) data)
+             old-cache @(:cache (meta flex))
+             new-cache (atom (into {} (map (fn [[k v]]
+                                             [k (assoc v :value (sets/difference (:value v) removed-ids-set))])
+                                           old-cache)))
+             updated-ids (apply dissoc ids id-list)
+             updated-pos-boundaries (filterv (fn [[_ id _]] (not (removed-ids-set id))) pos-boundaries)
+             inverted (:inverted (meta flex))
+             new-inverted (atom (into {} (map (fn [[word doc-ids]]
+                                                [word (sets/difference doc-ids removed-ids-set)])
+                                              @inverted)))]
+         (-> (assoc flex
+                    :ids updated-ids
+                    :data new-data
+                    :index index
+                    :pos-boundaries updated-pos-boundaries)
+             (vary-meta merge {:cache new-cache
+                              :inverted new-inverted}))))))
 
 (defn- search-add-bulk
   "Bulk insert approach: rebuilds entire B-tree from scratch.
@@ -637,12 +666,38 @@
         num-new-docs (count pairs)
         use-bulk? (>= num-new-docs *bulk-insert-threshold*)]
 
-    ;; Choose strategy based on batch size
-    (if use-bulk?
-      ;; Large batch: Use bulk rebuild (O(n + k))
-      (search-add-bulk flex pairs storage precompute?)
-      ;; Small batch: Use incremental inserts (O(k log n))
-      (search-add-incremental flex pairs storage precompute?))))
+    #?(:clj
+       ;; Choose strategy based on batch size
+       (if use-bulk?
+         ;; Large batch: Use bulk rebuild (O(n + k))
+         (search-add-bulk flex pairs storage precompute?)
+         ;; Small batch: Use incremental inserts (O(k log n))
+         (search-add-incremental flex pairs storage precompute?))
+       :cljs
+       ;; CLJS: simple vector-based implementation
+       (reduce
+        (fn [current-flex [id w]]
+          (if-not w
+            current-flex
+            (let [encoded-w (default-encoder w)
+                  len (.-length encoded-w)
+                  pos (.-length (:index current-flex))
+                  new-entry [pos id encoded-w]
+                  words (default-splitter encoded-w)
+                  inverted (:inverted (meta current-flex))
+                  new-inverted (atom (reduce (fn [m word]
+                                               (update m word (fnil conj #{}) id))
+                                             @inverted
+                                             words))]
+              (-> current-flex
+                  (assoc :data (conj (:data current-flex) new-entry)
+                         :index (str (:index current-flex) encoded-w join-char)
+                         :ids (assoc (:ids current-flex) id pos)
+                         :pos-boundaries (conj (:pos-boundaries current-flex) [pos id len]))
+                  (vary-meta merge {:cache (atom {})
+                                   :inverted new-inverted})))))
+        flex
+        pairs))))
 
 (defn rebuild-index [pairs]
   (loop [[[_ w] & ws] pairs
@@ -723,7 +778,7 @@
 
     ;; Lazy atom/map inverted index (memory storage)
     #?(:clj (instance? clojure.lang.Atom inverted)
-       :cljs false)
+       :cljs (instance? Atom inverted))
     #?(:clj
        ;; Check cache for exact match first
        (if-let [cached (get @inverted word)]
@@ -743,7 +798,20 @@
            ;; Cache the exact word for future lookups
            (swap! inverted assoc word doc-ids)
            doc-ids))
-       :cljs #{})
+       :cljs
+       ;; CLJS: Check cache for exact match first
+       (if-let [cached (get @inverted word)]
+         cached
+         ;; Not cached - scan the data vector
+         (let [doc-ids (reduce (fn [acc [_ id text]]
+                                 (if (some #(string/includes? % word) (default-splitter text))
+                                   (conj acc id)
+                                   acc))
+                               #{}
+                               data)]
+           ;; Cache the exact word for future lookups
+           (swap! inverted assoc word doc-ids)
+           doc-ids)))
 
     ;; No inverted index
     :else nil))

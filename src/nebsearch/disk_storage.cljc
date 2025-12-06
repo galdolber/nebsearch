@@ -86,7 +86,8 @@
                          id (.-id e)
                          text (.-text e)]
                      (.writeLong dos pos)
-                     (write-utf8-string dos id)
+                     ;; Convert id to string for serialization (handles Long IDs from datalite)
+                     (write-utf8-string dos (str id))
                      (if text
                        (do
                          (.writeBoolean dos true)
@@ -101,7 +102,8 @@
                          word (.-word e)
                          doc-id (.-doc-id e)]
                      (write-utf8-string dos word)
-                     (write-utf8-string dos doc-id)))
+                     ;; Convert doc-id to string for serialization (handles Long IDs from datalite)
+                     (write-utf8-string dos (str doc-id))))
 
                  ;; Backwards compatibility: vector entries
                  (vector? entry)
@@ -112,7 +114,8 @@
                        (.writeByte dos 0)
                        (let [[pos id text] entry]
                          (.writeLong dos pos)
-                         (write-utf8-string dos id)
+                         ;; Convert id to string for serialization (handles Long IDs from datalite)
+                         (write-utf8-string dos (str id))
                          (if text
                            (do
                              (.writeBoolean dos true)
@@ -123,7 +126,8 @@
                        (.writeByte dos 1)
                        (let [[word doc-id] entry]
                          (write-utf8-string dos word)
-                         (write-utf8-string dos doc-id)))))
+                         ;; Convert doc-id to string for serialization (handles Long IDs from datalite)
+                         (write-utf8-string dos (str doc-id))))))
 
                  :else
                  (throw (ex-info "Unknown entry type in B-tree node"

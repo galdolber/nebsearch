@@ -7,8 +7,8 @@
   - Dual mode: in-memory or disk-backed
   - Pluggable storage via IStorage protocol
   - Compatible with persistent-sorted-set API for [position id] pairs"
-  (:require [clojure.java.io :as io]
-            [clojure.edn :as edn]
+  (:require #?(:clj [clojure.java.io :as io])
+            #?(:clj [clojure.edn :as edn])
             [nebsearch.storage :as storage]
             [nebsearch.entries :as entries])
   #?(:clj (:import [java.io RandomAccessFile File]
