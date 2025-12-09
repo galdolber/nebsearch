@@ -125,13 +125,13 @@
 (defrecord InMemoryBTree [data]
   IBTree
   (bt-insert [this entry]
-    (->InMemoryBTree (conj data entry)))
+    (InMemoryBTree. (conj data entry)))
 
   (bt-bulk-insert [this entries]
-    (->InMemoryBTree (into data entries)))
+    (InMemoryBTree. (into data entries)))
 
   (bt-delete [this entry]
-    (->InMemoryBTree (disj data entry)))
+    (InMemoryBTree. (disj data entry)))
 
   (bt-range [this start end]
     (if (and start end)

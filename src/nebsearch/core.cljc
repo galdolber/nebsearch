@@ -247,59 +247,60 @@
 
       ;; B-tree with different storage or converting - extract entries and create new B-tree
       :else
-      (let [;; Create a B-tree with the target storage
-            btree (bt/->DurableBTree storage nil)
-            ;; Extract all entries from current B-tree using bt-seq
-            entries (vec (bt/bt-seq data))
-            btree-with-data (if (seq entries)
-                              (bt/bt-bulk-insert btree entries)
-                              btree)
-            root-offset (:root-offset btree-with-data)
-            ;; Migrate inverted index if needed
-            inverted-root-offset
-            (when (storage/precompute-inverted? storage)
-              ;; Target storage wants pre-computed inverted index
-              (let [inverted-btree (bt/->DurableBTree storage nil)
-                    ;; Extract inverted entries from current inverted index
-                    inverted-entries (cond
-                                      ;; Source is B-tree (disk -> disk migration)
-                                      #?(:clj (instance? nebsearch.btree.DurableBTree inverted)
-                                         :cljs false)
-                                      (vec (bt/bt-seq inverted))
+      #?(:clj
+         (let [;; Create a B-tree with the target storage
+               btree (bt/->DurableBTree storage nil)
+               ;; Extract all entries from current B-tree using bt-seq
+               entries (vec (bt/bt-seq data))
+               btree-with-data (if (seq entries)
+                                 (bt/bt-bulk-insert btree entries)
+                                 btree)
+               root-offset (:root-offset btree-with-data)
+               ;; Migrate inverted index if needed
+               inverted-root-offset
+               (when (storage/precompute-inverted? storage)
+                 ;; Target storage wants pre-computed inverted index
+                 (let [inverted-btree (bt/->DurableBTree storage nil)
+                       ;; Extract inverted entries from current inverted index
+                       inverted-entries (cond
+                                         ;; Source is B-tree (disk -> disk migration)
+                                         (instance? nebsearch.btree.DurableBTree inverted)
+                                         (vec (bt/bt-seq inverted))
 
-                                      ;; Source is atom/map (memory -> disk migration)
-                                      ;; Always build from scratch to ensure completeness
-                                      #?(:clj (instance? clojure.lang.Atom inverted)
-                                         :cljs false)
-                                      ;; Build from scratch by scanning main data B-tree
-                                      (vec (for [entry entries
-                                                 :let [^DocumentEntry e entry
-                                                       doc-id (.-id e)
-                                                       text (.-text e)]
-                                                 word (default-splitter text)]
-                                             (entries/->InvertedEntry word doc-id)))
+                                         ;; Source is atom/map (memory -> disk migration)
+                                         ;; Always build from scratch to ensure completeness
+                                         (instance? clojure.lang.Atom inverted)
+                                         ;; Build from scratch by scanning main data B-tree
+                                         (vec (for [entry entries
+                                                    :let [^DocumentEntry e entry
+                                                          doc-id (.-id e)
+                                                          text (.-text e)]
+                                                    word (default-splitter text)]
+                                                (entries/->InvertedEntry word doc-id)))
 
-                                      :else [])
-                    inverted-with-data (if (seq inverted-entries)
-                                        (bt/bt-bulk-insert inverted-btree inverted-entries)
-                                        inverted-btree)]
-                (:root-offset inverted-with-data)))]
-        ;; Update root offset in storage using generic protocol
-        (when (satisfies? storage/IStorageRoot storage)
-          (storage/set-root-offset storage root-offset))
+                                         :else [])
+                       inverted-with-data (if (seq inverted-entries)
+                                           (bt/bt-bulk-insert inverted-btree inverted-entries)
+                                           inverted-btree)]
+                   (:root-offset inverted-with-data)))]
+           ;; Update root offset in storage using generic protocol
+           (when (satisfies? storage/IStorageRoot storage)
+             (storage/set-root-offset storage root-offset))
 
-        ;; Save to storage
-        (when (satisfies? storage/IStorageSave storage)
-          (storage/save storage))
+           ;; Save to storage
+           (when (satisfies? storage/IStorageSave storage)
+             (storage/save storage))
 
-        ;; Don't store index string for disk storage with pre-computed inverted index
-        ;; The string is only needed for fallback search, which never triggers with inverted index
-        ;; This saves massive memory (100MB-10GB) for large indexes
-        (cond-> {:root-offset root-offset
-                 :index (if inverted-root-offset "" (:index index))  ; Empty for disk storage!
-                 :ids (:ids index)
-                 :pos-boundaries (:pos-boundaries index)}
-          inverted-root-offset (assoc :inverted-root-offset inverted-root-offset))))))
+           ;; Don't store index string for disk storage with pre-computed inverted index
+           ;; The string is only needed for fallback search, which never triggers with inverted index
+           ;; This saves massive memory (100MB-10GB) for large indexes
+           (cond-> {:root-offset root-offset
+                    :index (if inverted-root-offset "" (:index index))  ; Empty for disk storage!
+                    :ids (:ids index)
+                    :pos-boundaries (:pos-boundaries index)}
+             inverted-root-offset (assoc :inverted-root-offset inverted-root-offset)))
+         :cljs
+         (throw (ex-info "store with different storage not supported in ClojureScript" {}))))))
 
 (defn restore
   "Restore an index from storage using a reference.
@@ -363,13 +364,14 @@
   "Build sorted vector of [position, doc-id, text-length] from :ids map.
    Enables binary search to find which document contains a given position."
   [ids index]
-  ;; Use Arrays.sort for maximum performance with Comparable deftypes
+  ;; Use Arrays.sort for maximum performance with Comparable deftypes (JVM only)
   (let [entries (map (fn [[id pos]]
                       (let [len (find-len index pos)]
                         (entries/->DocumentEntry pos id len)))
                     ids)
         arr (to-array entries)]
-    (Arrays/sort arr)
+    #?(:clj (Arrays/sort arr)
+       :cljs (.sort arr))
     (vec arr)))
 
 (defn- find-doc-at-pos
@@ -534,9 +536,10 @@
               ;; Progressive slowdown as tree grows, but still faster than incremental disk writes
               existing-entries (bt/bt-seq data)
               all-data-entries (into existing-entries btree-entries)
-              new-data (if (seq all-data-entries)
-                        (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-data-entries)
-                        data)
+              new-data #?(:clj (if (seq all-data-entries)
+                                (bt/bt-bulk-insert (bt/->DurableBTree storage nil) all-data-entries)
+                                data)
+                          :cljs data)  ;; CLJS uses simple vector, not B-tree
               ;; Update inverted index
               inverted (:inverted (meta flex))
               new-inverted (cond
